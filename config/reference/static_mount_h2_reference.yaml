@@ -1,0 +1,28 @@
+schema_version: 1
+translation:
+- 0.018
+- 0.098
+- 0.059
+rotation_quat:
+- -0.47223328
+- -0.47479525
+- 0.54646189
+- 0.50293598
+parent_frame: camera
+child_frame: lidar
+units:
+  translation: m
+  rotation: quaternion_xyzw
+source:
+  method: SVD
+  rig_config: static_mount_h1
+  dataset: ~/dataset_root/static_h1/run_001
+  notes: baseline estimate (not GT), computed from N repeated calibrations
+repeatability:
+  translation_std_m:
+  - 0.001
+  - 0.0012
+  - 0.0015
+  rotation_std_deg: 0.35
+config_id: static_mount_h2
+notes: "synthetic h2 generated from updated h1 reference using option1: +7.0 deg yaw, translation unchanged"

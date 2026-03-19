@@ -1,0 +1,16 @@
+.vscode/
+**/.venv/
+pose-data/
+__pycache__/
+data/
+logs/
+**.pth
+*.pt
+wandb/
+*results*/
+*ckpts/
+*.avi
+*.pyc
+
+**/build/**
+**/*.so

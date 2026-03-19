@@ -1,0 +1,24 @@
+schema_version: 1
+
+# Baseline/reference extrinsics (Abdul Haq tool)
+# This is NOT ground truth.
+translation: [0.0521, -0.0034, 0.0987]          # meters
+rotation_quat: [0.0012, -0.0008, 0.0123, 0.9999] # x,y,z,w (unit quaternion)
+
+parent_frame: "camera"
+child_frame: "lidar"
+
+units:
+  translation: "m"
+  rotation: "quaternion_xyzw"
+
+source:
+  method: "abdul_haq_manual_tool"
+  rig_config: "dynamic"
+  dataset: "~/dataset_root/dynamic/run_001"
+  notes: "baseline estimate (not GT), computed from N repeated calibrations"
+
+repeatability:
+  # Optional but very useful for Option C reporting
+  translation_std_m: [0.0010, 0.0012, 0.0015]   # per-axis std (m)
+  rotation_std_deg: 0.35                        # scalar std (deg)

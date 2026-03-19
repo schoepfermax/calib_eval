@@ -1,0 +1,40 @@
+schema_version: 1
+
+camera:
+  fx: 500.0
+  fy: 500.0
+  cx: 320.0
+  cy: 240.0
+
+edge:
+  canny_low: 100
+  canny_high: 200
+
+# Reference / baseline configuration
+# NOTE: This is NOT ground truth. It is Abdul Haq tool baseline estimate.
+reference:
+  enabled: true
+  reference_yaml_path: ""
+  parent_frame_override: ""
+  child_frame_override: ""
+
+metrics:
+  reprojection:
+    enabled: true
+    method: pixel_error_px
+
+  edge_alignment:
+    enabled: true
+    method: edge_distance_px
+
+  baseline_deviation:
+    enabled: true
+    publish_running_std: true
+
+  pose_gt:
+    enabled: false
+
+output:
+  # For benchmarking / thesis experiments, we MUST write CSV to disk.
+  save_to_file: true
+  output_path: ~/evaluation_results/

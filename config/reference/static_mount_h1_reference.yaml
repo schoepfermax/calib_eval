@@ -1,0 +1,24 @@
+schema_version: 1
+
+# Baseline/reference extrinsics
+# This is NOT ground truth.
+translation: [0.018, 0.098, 0.059]          # meters
+rotation_quat: [-0.5047, -0.5046, 0.5166, 0.4730] # x,y,z,w (unit quaternion)
+
+parent_frame: "camera"
+child_frame: "lidar"
+
+units:
+  translation: "m"
+  rotation: "quaternion_xyzw"
+
+source:
+  method: "SVD"
+  rig_config: "static_mount_h1"
+  dataset: "~/dataset_root/static_h1/run_001"
+  notes: "baseline estimate (not GT), computed from N repeated calibrations"
+
+repeatability:
+  # Optional but very useful for Option C reporting
+  translation_std_m: [0.0010, 0.0012, 0.0015]   # per-axis std (m)
+  rotation_std_deg: 0.35                        # scalar std (deg)

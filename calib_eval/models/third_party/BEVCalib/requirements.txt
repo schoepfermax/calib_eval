@@ -1,0 +1,11 @@
+deformable_attention==0.0.20
+numpy==1.23.5
+open3d==0.16.1
+opencv_python==4.7.0.68
+Pillow==11.2.1
+pykitti==0.3.1
+scipy==1.15.3
+setuptools==65.5.1
+spconv==2.3.8
+torch==2.0.1 --extra-index-url https://download.pytorch.org/whl/cu118
+transformers==4.29.1
