@@ -1,9 +1,9 @@
 schema_version: 1
 
-# Baseline/reference extrinsics (Abdul Haq tool)
-# This is NOT ground truth.
-translation: [0.0521, -0.0034, 0.0987]          # meters
-rotation_quat: [0.0012, -0.0008, 0.0123, 0.9999] # x,y,z,w (unit quaternion)
+# Baseline/reference extrinsics derived from the dynamic rig URDF/xacro
+# for model car 6. This is NOT ground truth.
+translation: [0.0305, 0.0115, -0.0274]             # meters
+rotation_quat: [0.0, 0.0, -0.3826834, 0.9238795]   # x,y,z,w (unit quaternion)
 
 parent_frame: "camera"
 child_frame: "lidar"
@@ -13,12 +13,12 @@ units:
   rotation: "quaternion_xyzw"
 
 source:
-  method: "abdul_haq_manual_tool"
-  rig_config: "dynamic"
-  dataset: "~/dataset_root/dynamic/run_001"
-  notes: "baseline estimate (not GT), computed from N repeated calibrations"
+  method: "urdf_xacro_derived"
+  rig_config: "dynamic_car_6"
+  dataset: "~/dataset_root/dynamic_rig/run_001"
+  notes: "reference derived from car_description URDF/xacro for car 6; LiDAR yaw offset = -45 deg; baseline/reference only, not GT"
 
 repeatability:
-  # Optional but very useful for Option C reporting
+  # Placeholder repeatability block retained for Option C reporting.
   translation_std_m: [0.0010, 0.0012, 0.0015]   # per-axis std (m)
   rotation_std_deg: 0.35                        # scalar std (deg)

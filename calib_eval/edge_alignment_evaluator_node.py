@@ -21,6 +21,7 @@ from geometry_msgs.msg import TransformStamped
 from cv_bridge import CvBridge
 from sensor_msgs_py import point_cloud2
 import numpy as np
+from calib_eval import dynamic_utils as dyn_utils
 
 try:
     from geometry_utils import (
@@ -185,13 +186,24 @@ class EdgeAlignmentEvaluatorNode(Node):
         self.try_compute()
 
     def scan_callback(self, msg):
-        pts = laserscan_to_points_xy_plane(
-            ranges=list(msg.ranges),
-            angle_min=float(msg.angle_min),
-            angle_increment=float(msg.angle_increment),
-            range_min=float(msg.range_min),
-            range_max=float(msg.range_max)
-        )
+        """
+        Dynamic-rig LaserScan conversion must match the same helper used by the
+        offline/online 2D calibration path. Using a different scan embedding in
+        the evaluator makes the metric path geometrically inconsistent with the
+        optimization path.
+        """
+        scan_dict = {
+            "ranges": list(msg.ranges),
+            "intensities": list(msg.intensities),
+            "angle_min": float(msg.angle_min),
+            "angle_max": float(msg.angle_max),
+            "angle_increment": float(msg.angle_increment),
+            "time_increment": float(msg.time_increment),
+            "scan_time": float(msg.scan_time),
+            "range_min": float(msg.range_min),
+            "range_max": float(msg.range_max),
+        }
+        pts = dyn_utils.scan_dict_to_points_lidar_frame(scan_dict)
         self.latest_points = np.asarray(pts, dtype=np.float32)
         self.try_compute()
 

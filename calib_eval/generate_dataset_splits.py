@@ -8,9 +8,9 @@ import random
 from typing import List, Tuple, Dict
 
 
-def _is_run_folder(path: str) -> bool:
+def _is_static_run_folder(path: str) -> bool:
     """
-    A "run folder" is considered valid if it has at least:
+    A static-style run folder is considered valid if it has at least:
       - images/
       - lidar/
     """
@@ -18,6 +18,39 @@ def _is_run_folder(path: str) -> bool:
         os.path.isdir(os.path.join(path, "images")) and
         os.path.isdir(os.path.join(path, "lidar"))
     )
+
+
+def _is_dynamic_run_folder(path: str) -> bool:
+    """
+    A dynamic-rig run folder is considered valid if it has:
+      - images/
+      - scans/
+      - lidar/
+      - odom/
+      - intrinsics/
+      - meta/
+
+    We keep this explicit because dynamic-rig samples are expected to be
+    multi-modal and keyed by the same sample ID across these folders.
+    """
+    required_subdirs = [
+        "images",
+        "scans",
+        "lidar",
+        "odom",
+        "intrinsics",
+        "meta",
+    ]
+    return all(os.path.isdir(os.path.join(path, name)) for name in required_subdirs)
+
+
+def _is_run_folder(path: str) -> bool:
+    """
+    A "run folder" is valid if it matches either:
+      - static-style structure
+      - dynamic-rig structure
+    """
+    return _is_static_run_folder(path) or _is_dynamic_run_folder(path)
 
 
 def _discover_run_folders(parent_dir: str) -> List[str]:
@@ -49,14 +82,16 @@ def _list_sample_ids_from_images(run_dir: str) -> List[str]:
     image_dir = os.path.join(run_dir, "images")
     if not os.path.isdir(image_dir):
         return []
-    ids = []
+
+    ids: List[str] = []
     for f in os.listdir(image_dir):
         if f.endswith(".png"):
             ids.append(os.path.splitext(f)[0])
+
     return sorted(ids)
 
 
-def _validate_samples(run_dir: str, sample_ids: List[str]) -> Tuple[List[str], Dict[str, int]]:
+def _validate_static_samples(run_dir: str, sample_ids: List[str]) -> Tuple[List[str], Dict[str, int]]:
     """
     Filters sample IDs to keep only those with image + lidar present.
 
@@ -104,6 +139,98 @@ def _validate_samples(run_dir: str, sample_ids: List[str]) -> Tuple[List[str], D
     return valid, stats
 
 
+def _validate_dynamic_samples(run_dir: str, sample_ids: List[str]) -> Tuple[List[str], Dict[str, int]]:
+    """
+    Filters dynamic-rig sample IDs to keep only those with all required
+    per-sample files present.
+
+    Required per-sample files:
+      - images/<sid>.png
+      - scans/<sid>.npz
+      - lidar/<sid>.pcd
+      - odom/<sid>.yaml
+      - meta/<sid>.yaml
+
+    Required per-run file:
+      - intrinsics/camera_intrinsics.yaml
+
+    Returns:
+      valid_ids: List[str]
+      stats: dict with missing counts (for logging)
+    """
+    img_dir = os.path.join(run_dir, "images")
+    scans_dir = os.path.join(run_dir, "scans")
+    lidar_dir = os.path.join(run_dir, "lidar")
+    odom_dir = os.path.join(run_dir, "odom")
+    meta_dir = os.path.join(run_dir, "meta")
+    intrinsics_path = os.path.join(run_dir, "intrinsics", "camera_intrinsics.yaml")
+
+    missing_img = 0
+    missing_scans = 0
+    missing_lidar = 0
+    missing_odom = 0
+    missing_meta = 0
+    missing_intrinsics = 0
+
+    valid: List[str] = []
+
+    for sid in sample_ids:
+        img_path = os.path.join(img_dir, f"{sid}.png")
+        scan_path = os.path.join(scans_dir, f"{sid}.npz")
+        lidar_path = os.path.join(lidar_dir, f"{sid}.pcd")
+        odom_path = os.path.join(odom_dir, f"{sid}.yaml")
+        meta_path = os.path.join(meta_dir, f"{sid}.yaml")
+
+        ok = True
+
+        if not os.path.exists(img_path):
+            missing_img += 1
+            ok = False
+
+        if not os.path.exists(scan_path):
+            missing_scans += 1
+            ok = False
+
+        if not os.path.exists(lidar_path):
+            missing_lidar += 1
+            ok = False
+
+        if not os.path.exists(odom_path):
+            missing_odom += 1
+            ok = False
+
+        if not os.path.exists(meta_path):
+            missing_meta += 1
+            ok = False
+
+        if not os.path.exists(intrinsics_path):
+            missing_intrinsics += 1
+            ok = False
+
+        if ok:
+            valid.append(sid)
+
+    stats = {
+        "missing_img": missing_img,
+        "missing_scans": missing_scans,
+        "missing_lidar": missing_lidar,
+        "missing_odom": missing_odom,
+        "missing_meta": missing_meta,
+        "missing_intrinsics_file": missing_intrinsics,
+    }
+    return valid, stats
+
+
+def _validate_samples(run_dir: str, sample_ids: List[str]) -> Tuple[List[str], Dict[str, int]]:
+    """
+    Dispatches validation based on the detected run-folder style.
+    """
+    if _is_dynamic_run_folder(run_dir):
+        return _validate_dynamic_samples(run_dir, sample_ids)
+
+    return _validate_static_samples(run_dir, sample_ids)
+
+
 def _write_split(index_dir: str, name: str, split_ids: List[str]) -> None:
     """
     Writes split IDs into index/<name>.txt, one ID per line.
@@ -126,6 +253,10 @@ def generate_splits(
       - a single run folder OR
       - a parent folder containing run_### subfolders
 
+    Supports:
+      - static-style runs
+      - dynamic-rig runs
+
     Splits are deterministic due to `seed`.
     """
     dataset_root = os.path.expanduser(dataset_root)
@@ -141,7 +272,7 @@ def generate_splits(
     if not run_dirs:
         raise RuntimeError(
             f"No valid run folders found under: {dataset_root}\n"
-            f"Expected either a run folder (images/, lidar/) or a parent folder with run_### subfolders."
+            f"Expected either a run folder or a parent folder with run_### subfolders."
         )
 
     rng = random.Random(seed)
@@ -151,11 +282,12 @@ def generate_splits(
     # -----------------------------
     for run_dir in run_dirs:
         run_name = os.path.basename(run_dir)
+        run_type = "dynamic" if _is_dynamic_run_folder(run_dir) else "static"
 
         # (a) Discover candidate IDs from images/
         candidate_ids = _list_sample_ids_from_images(run_dir)
 
-        # (b) Validate that lidar exists
+        # (b) Validate required per-sample files
         valid_ids, stats = _validate_samples(run_dir, candidate_ids)
 
         n_total = len(valid_ids)
@@ -183,8 +315,8 @@ def generate_splits(
         # (f) Report
         print(
             f"[OK] {run_name}: split completed "
-            f"(total_valid={n_total}, train={len(train_set)}, val={len(val_set)}, test={len(test_set)}), "
-            f"missing(img={stats['missing_img']}, lidar={stats['missing_lidar']}, gt_yaml_optional={stats['missing_gt_yaml_optional']})"
+            f"(type={run_type}, total_valid={n_total}, train={len(train_set)}, val={len(val_set)}, test={len(test_set)}), "
+            f"missing={stats}"
         )
 
 
