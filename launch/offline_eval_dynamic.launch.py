@@ -99,8 +99,25 @@ def generate_launch_description():
                 "camera_info_topic": "/eval/camera_info",
                 "reference_extrinsics_topic": "/eval/ref_extrinsics",
                 "output_extrinsics_topic": "/eval/offline2d_extrinsics",
-                "max_frames": 150,
-                "top_k": 40,
+
+                # Lighter sanity/integration settings for the laptop-side 2D path.
+                "max_frames": 40,
+                "top_k": 20,
+
+                # Keep the search explicit and thesis-defensible, but cheaper.
+                "stage_a_translation_steps_x_m": [-0.05, 0.0, 0.05],
+                "stage_a_translation_steps_y_m": [-0.05, 0.0, 0.05],
+                "stage_a_translation_steps_z_m": [0.0],
+                "stage_a_rotation_steps_roll_deg": [0.0],
+                "stage_a_rotation_steps_pitch_deg": [0.0],
+                "stage_a_rotation_steps_yaw_deg": [-2.0, 0.0, 2.0],
+
+                "stage_b_translation_steps_x_m": [-0.01, 0.0, 0.01],
+                "stage_b_translation_steps_y_m": [-0.01, 0.0, 0.01],
+                "stage_b_translation_steps_z_m": [0.0],
+                "stage_b_rotation_steps_roll_deg": [0.0],
+                "stage_b_rotation_steps_pitch_deg": [0.0],
+                "stage_b_rotation_steps_yaw_deg": [-0.5, 0.0, 0.5],
             }],
         ),
 

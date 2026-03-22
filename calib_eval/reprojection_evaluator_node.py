@@ -22,6 +22,7 @@ from geometry_msgs.msg import TransformStamped
 from cv_bridge import CvBridge
 from sensor_msgs_py import point_cloud2
 import numpy as np
+from calib_eval import dynamic_utils as dyn_utils
 
 try:
     from geometry_utils import (
@@ -186,13 +187,28 @@ class ReprojectionEvaluatorNode(Node):
         self.try_compute()
 
     def scan_callback(self, msg):
-        pts = laserscan_to_points_xy_plane(
-            ranges=list(msg.ranges),
-            angle_min=float(msg.angle_min),
-            angle_increment=float(msg.angle_increment),
-            range_min=float(msg.range_min),
-            range_max=float(msg.range_max)
-        )
+        """
+        Dynamic-rig LaserScan conversion must use the same helper as the 2D
+        calibration path. Earlier, the evaluator used geometry_utils
+        laserscan_to_points_xy_plane(...), while offline2d/online2d used
+        dynamic_utils.scan_dict_to_points_lidar_frame(...).
+
+        That mismatch caused the projection/evaluation path to operate on a
+        different scan embedding than the optimization path, which contributed
+        to reprojection breakdown.
+        """
+        scan_dict = {
+            "ranges": list(msg.ranges),
+            "intensities": list(msg.intensities),
+            "angle_min": float(msg.angle_min),
+            "angle_max": float(msg.angle_max),
+            "angle_increment": float(msg.angle_increment),
+            "time_increment": float(msg.time_increment),
+            "scan_time": float(msg.scan_time),
+            "range_min": float(msg.range_min),
+            "range_max": float(msg.range_max),
+        }
+        pts = dyn_utils.scan_dict_to_points_lidar_frame(scan_dict)
         self.latest_points = np.asarray(pts, dtype=np.float32)
         self.try_compute()
 

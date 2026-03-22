@@ -181,10 +181,43 @@ def transform_points(points_xyz, translation_xyz, quaternion_xyzw):
 # SCAN CONVERSION AND PROJECTION
 ###############################################
 
-def scan_dict_to_points_lidar_frame(scan_dict, z_value=0.0):
+def scan_dict_to_points_lidar_frame(scan_dict, vertical_offset=0.0):
     """
-    Convert stored raw 2D scan into Nx3 points in the scanner frame.
-    The scan is assumed to lie in the XY plane of the scanner frame.
+    Convert stored raw 2D scan into Nx3 points in the LiDAR frame using the
+    dynamic-rig projection convention.
+
+    IMPORTANT PROJECTION NOTE
+    -------------------------
+    The dynamic 2D pipeline publishes extrinsics as camera->lidar and later
+    projects LiDAR points into the camera image. Camera projection expects
+    camera-frame depth on +Z. For this rig, the raw 2D scan must therefore be
+    embedded in a camera-compatible horizontal plane before projection.
+
+    The earlier implementation placed the scan in the LiDAR XY plane:
+        x = r * cos(a)
+        y = r * sin(a)
+        z = 0
+
+    That breaks projection for this dynamic rig because the scan then has no
+    meaningful forward depth when combined with the near-identity reference
+    transform. The result was the exact failure observed in the first dynamic
+    end-to-end run:
+      - reprojection visibility collapsed to 0
+      - reprojection pixel error became inf
+      - edge-hit ratio collapsed to 0
+
+    The dynamic rig uses a camera-like convention instead:
+      - +Z = forward / depth
+      - +X = right in the image
+      - Y stays approximately constant for the horizontal scan plane
+
+    Therefore we embed the raw 2D scan as:
+      x = -r * sin(a)
+      y = vertical_offset
+      z =  r * cos(a)
+
+    This keeps the dynamic scan geometry consistent with the rest of the 2D
+    camera-projection path.
     """
     if scan_dict is None:
         return np.zeros((0, 3), dtype=np.float32)
@@ -207,9 +240,9 @@ def scan_dict_to_points_lidar_frame(scan_dict, z_value=0.0):
     r = ranges[valid]
     a = angles[valid]
 
-    x = r * np.cos(a)
-    y = r * np.sin(a)
-    z = np.full_like(x, float(z_value), dtype=np.float32)
+    x = -r * np.sin(a)
+    y = np.full_like(r, float(vertical_offset), dtype=np.float32)
+    z = r * np.cos(a)
     return np.stack([x, y, z], axis=1).astype(np.float32)
 
 
@@ -248,9 +281,42 @@ def filter_projected_points_inside_image(uv, image_shape):
     return inside
 
 
+def invert_transform(translation_xyz, quaternion_xyzw):
+    """
+    Invert a camera->lidar rigid transform into lidar->camera.
+
+    The dynamic 2D pipeline publishes and optimizes camera->lidar extrinsics,
+    but image projection requires LiDAR points to be transformed into the
+    camera frame. This inversion is therefore mandatory before projection.
+    """
+    t = np.asarray(translation_xyz, dtype=np.float32).reshape(3,)
+    q = normalize_quaternion_xyzw(quaternion_xyzw)
+
+    R = quaternion_to_rotation_matrix_xyzw(q)
+    R_inv = R.T
+    t_inv = -R_inv @ t
+    q_inv = rotation_matrix_to_quaternion_xyzw(R_inv)
+    return t_inv.astype(np.float32), q_inv.astype(np.float32)
+
+
 def project_scan_to_image(scan_dict, translation_xyz, quaternion_xyzw, intrinsics, image_shape):
+    """
+    Project a dynamic-rig raw scan into the image.
+
+    INPUT EXTRINSIC CONVENTION
+    --------------------------
+    translation_xyz / quaternion_xyzw are expected to represent the published
+    camera->lidar transform, because that is the convention used by the dynamic
+    reference publisher and the 2D calibration nodes.
+
+    PROJECTION CONVENTION
+    ---------------------
+    LiDAR points must be transformed into the camera frame before perspective
+    projection. Therefore we first invert camera->lidar into lidar->camera.
+    """
     pts_lidar = scan_dict_to_points_lidar_frame(scan_dict)
-    pts_cam = transform_points(pts_lidar, translation_xyz, quaternion_xyzw)
+    t_lidar_cam, q_lidar_cam = invert_transform(translation_xyz, quaternion_xyzw)
+    pts_cam = transform_points(pts_lidar, t_lidar_cam, q_lidar_cam)
     uv, valid_depth = project_points_camera_to_image(pts_cam, intrinsics)
     inside = filter_projected_points_inside_image(uv, image_shape)
     valid = valid_depth & inside
