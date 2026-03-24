@@ -29,6 +29,7 @@ def generate_launch_description():
     split_cfg = LaunchConfiguration("split")
     rig_config_id_cfg = LaunchConfiguration("rig_config_id")
     use_dynamic_rig_cfg = LaunchConfiguration("use_dynamic_rig")
+    dynamic_representation_cfg = LaunchConfiguration("dynamic_representation")
     model_node_executable_cfg = LaunchConfiguration("model_node_executable")
 
     # Topics (parametrized to support benchmarking + multi-env without code edits)
@@ -85,6 +86,11 @@ def generate_launch_description():
             "use_dynamic_rig",
             default_value="false",
             description="If true, pipeline expects dynamic rig dataset conventions."
+        ),
+        DeclareLaunchArgument(
+            "dynamic_representation",
+            default_value="pseudo_points",
+            description="Dynamic rig representation for the data_preprocessor_node: raw_scan or pseudo_points."
         ),
         DeclareLaunchArgument(
             "model_node_executable",
@@ -182,6 +188,7 @@ def generate_launch_description():
                 "split": split_cfg,
                 "publish_rate_hz": dataset_publish_rate_hz_cfg,
                 "use_dynamic_rig": use_dynamic_rig_cfg,
+                "dynamic_representation": dynamic_representation_cfg,
                 "camera_frame_id": "camera",
                 "out_image_topic": image_topic_cfg,
                 "out_points_topic": lidar_topic_cfg,
@@ -217,6 +224,8 @@ def generate_launch_description():
                 "lidar_topic": lidar_topic_cfg,
                 "camera_info_topic": camera_info_topic_cfg,
                 "estimated_extrinsics_topic": estimated_extrinsics_topic_cfg,
+                "reference_yaml_path": reference_yaml_path_cfg,
+                "rig_config_id": rig_config_id_cfg,
                 "checkpoint_path": checkpoint_path_cfg,
                 "device": device_cfg,
                 "lccnet_mode": lccnet_mode_cfg,

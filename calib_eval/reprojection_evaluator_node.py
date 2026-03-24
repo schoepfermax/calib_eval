@@ -50,6 +50,7 @@ class ReprojectionEvaluatorNode(Node):
 
         # Rig selection + topics
         self.declare_parameter('use_dynamic_rig', False)
+        self.declare_parameter('dynamic_representation', '')
         self.declare_parameter('image_topic', '/eval/clean/image')
         self.declare_parameter('lidar_topic', '')  # optional override
         self.declare_parameter('extrinsics_topic', '/eval/estimated_extrinsics')
@@ -74,8 +75,8 @@ class ReprojectionEvaluatorNode(Node):
         # Subscribers
         self.image_sub = self.create_subscription(Image, image_topic, self.image_callback, 10)
 
-        use_dynamic = bool(self.get_parameter('use_dynamic_rig').value)
-        if use_dynamic:
+        use_scan_input = self._use_scan_input(lidar_topic)
+        if use_scan_input:
             self.lidar_sub = self.create_subscription(LaserScan, lidar_topic, self.scan_callback, 10)
         else:
             self.lidar_sub = self.create_subscription(PointCloud2, lidar_topic, self.lidar_callback, 10)
@@ -98,22 +99,59 @@ class ReprojectionEvaluatorNode(Node):
         # store latest camera info (per-run intrinsics)
         self.latest_camera_info = None
 
+        # Debug counters
+        self.debug_counter = 0
+        self.debug_log_every = 20
+
         self.get_logger().info(
             "ReprojectionEvaluatorNode started.\n"
             f"  image_topic={image_topic}\n"
             f"  lidar_topic={lidar_topic}\n"
             f"  extrinsics_topic={extr_topic}\n"
             f"  use_dynamic_rig={bool(self.get_parameter('use_dynamic_rig').value)}\n"
+            f"  dynamic_representation={str(self.get_parameter('dynamic_representation').value).strip() or '<auto>'}\n"
             f"  evaluation_config_path={cfg_path}\n"
             f"  camera_info_topic={cam_info_topic} (preferred if available; YAML fallback)"
         )
+
+    def _use_scan_input(self, resolved_lidar_topic=None):
+        """
+        Decide whether the lidar input topic should be treated as LaserScan or PointCloud2.
+
+        Dynamic-rig evaluation is representation-dependent:
+          - raw_scan      -> LaserScan
+          - pseudo_points -> PointCloud2
+
+        To avoid requiring an immediate synchronized launch-file change, we also
+        infer from the resolved topic name when possible:
+          - .../scan   -> LaserScan
+          - .../points -> PointCloud2
+
+        If dynamic_representation is unset and the topic is ambiguous, we keep
+        the previous behavior for backward compatibility:
+          - dynamic rig defaults to LaserScan
+          - static rig defaults to PointCloud2
+        """
+        dynamic_representation = str(self.get_parameter('dynamic_representation').value).strip().lower()
+        if dynamic_representation == 'raw_scan':
+            return True
+        if dynamic_representation == 'pseudo_points':
+            return False
+
+        topic = (resolved_lidar_topic or '').strip()
+        if topic.endswith('/scan'):
+            return True
+        if topic.endswith('/points'):
+            return False
+
+        use_dynamic = bool(self.get_parameter('use_dynamic_rig').value)
+        return use_dynamic
 
     def _resolve_lidar_topic(self):
         explicit = str(self.get_parameter('lidar_topic').value).strip()
         if explicit:
             return explicit
-        use_dynamic = bool(self.get_parameter('use_dynamic_rig').value)
-        return '/eval/clean/scan' if use_dynamic else '/eval/clean/points'
+        return '/eval/clean/scan' if self._use_scan_input() else '/eval/clean/points'
 
     def _resolve_eval_config_path(self, user_path: str) -> str:
         """
@@ -208,63 +246,71 @@ class ReprojectionEvaluatorNode(Node):
             "range_min": float(msg.range_min),
             "range_max": float(msg.range_max),
         }
-        pts = dyn_utils.scan_dict_to_points_lidar_frame(scan_dict)
+
+        try:
+            pts = dyn_utils.scan_dict_to_points_lidar_frame(scan_dict)
+        except Exception as e:
+            self.get_logger().warn(f"dynamic_utils.scan_dict_to_points_lidar_frame failed ({e}); falling back.")
+            pts = laserscan_to_points_xy_plane(
+                scan_dict["ranges"],
+                scan_dict["angle_min"],
+                scan_dict["angle_increment"]
+            )
+
         self.latest_points = np.asarray(pts, dtype=np.float32)
         self.try_compute()
 
     def tf_callback(self, msg):
-        self.latest_tf = msg
+        t = msg.transform.translation
+        q = msg.transform.rotation
+        self.latest_tf = (
+            np.array([t.x, t.y, t.z], dtype=np.float32),
+            np.array([q.x, q.y, q.z, q.w], dtype=np.float32),
+        )
         self.try_compute()
 
-    def _intrinsics_from_camera_info(self, cam: CameraInfo):
+    def _resolve_intrinsics(self):
         """
-        Convert ROS CameraInfo into the intrinsics dict format expected by geometry_utils.
-
-        geometry_utils expects:
-          {'fx':..., 'fy':..., 'cx':..., 'cy':...}
+        Prefer live CameraInfo if available; otherwise use evaluation.yaml.
         """
-        K = list(cam.k)
-        if len(K) != 9:
-            return None
-        fx = float(K[0])
-        fy = float(K[4])
-        cx = float(K[2])
-        cy = float(K[5])
-        return {'fx': fx, 'fy': fy, 'cx': cx, 'cy': cy}
+        if self.latest_camera_info is not None:
+            k = np.array(self.latest_camera_info.k, dtype=np.float32).reshape(3, 3)
+            return {
+                'fx': float(k[0, 0]),
+                'fy': float(k[1, 1]),
+                'cx': float(k[0, 2]),
+                'cy': float(k[1, 2]),
+            }
+        return self.intrinsics
 
     def try_compute(self):
         if self.latest_image is None or self.latest_points is None or self.latest_tf is None:
+            self.debug_counter += 1
+            if self.debug_counter <= 10 or (self.debug_counter % self.debug_log_every == 0):
+                self.get_logger().info(
+                    "[DEBUG reproj precheck] "
+                    f"have_image={self.latest_image is not None} "
+                    f"have_points={self.latest_points is not None} "
+                    f"have_tf={self.latest_tf is not None} "
+                    f"have_camera_info={self.latest_camera_info is not None}"
+                )
             return
 
-        if len(self.latest_points) == 0:
-            self.pub_vis.publish(Float32(data=0.0))
-            self.pub_px_legacy.publish(Float32(data=float('inf')))
-            self.pub_px.publish(Float32(data=float('inf')))
+        intrinsics = self._resolve_intrinsics()
+        if intrinsics is None:
+            self.debug_counter += 1
+            if self.debug_counter <= 10 or (self.debug_counter % self.debug_log_every == 0):
+                self.get_logger().info(
+                    "[DEBUG reproj precheck] "
+                    f"have_image={self.latest_image is not None} "
+                    f"have_points={self.latest_points is not None} "
+                    f"have_tf={self.latest_tf is not None} "
+                    f"have_camera_info={self.latest_camera_info is not None} "
+                    "intrinsics_resolved=False"
+                )
             return
 
-        # CameraInfo intrinsics if available; fall back to YAML intrinsics
-        intrinsics = self.intrinsics
-        if self.latest_camera_info is not None:
-            intr_from_ci = self._intrinsics_from_camera_info(self.latest_camera_info)
-            if intr_from_ci is not None:
-                intrinsics = intr_from_ci
-
-        t = np.array([
-            self.latest_tf.transform.translation.x,
-            self.latest_tf.transform.translation.y,
-            self.latest_tf.transform.translation.z
-        ], dtype=np.float32)
-
-        q = np.array([
-            self.latest_tf.transform.rotation.x,
-            self.latest_tf.transform.rotation.y,
-            self.latest_tf.transform.rotation.z,
-            self.latest_tf.transform.rotation.w
-        ], dtype=np.float32)
-
-        # NOTE:
-        #   Extrinsics topics are camera->lidar (frame_id=camera, child_frame_id=lidar).
-        #   Projection expects lidar->camera. Invert here (adapter responsibility).
+        t, q = self.latest_tf
         t_lidar_cam, q_lidar_cam = invert_extrinsics_cam_to_lidar_to_lidar_to_cam(t, q)
 
         projected_uv, _ = project_lidar_to_image(
@@ -276,17 +322,46 @@ class ReprojectionEvaluatorNode(Node):
         _, dist = compute_edge_distance_transform(self.latest_image, self.canny_low, self.canny_high)
         mean_px, _ = mean_edge_distance_px(dist, projected_uv)
 
+        # --------------------------------------------------
+        # Debug logging for dynamic pseudo-points diagnosis
+        # --------------------------------------------------
+        self.debug_counter += 1
+        if self.debug_counter <= 5 or (self.debug_counter % self.debug_log_every == 0):
+            z_min = float(np.min(self.latest_points[:, 2])) if self.latest_points.ndim == 2 and self.latest_points.shape[1] >= 3 else float('nan')
+            z_max = float(np.max(self.latest_points[:, 2])) if self.latest_points.ndim == 2 and self.latest_points.shape[1] >= 3 else float('nan')
+            sample_uv = projected_uv[:3].tolist() if len(projected_uv) > 0 else []
+
+            self.get_logger().info(
+                "[DEBUG reproj] "
+                f"points_total={len(self.latest_points)} "
+                f"projected_valid={len(projected_uv)} "
+                f"visibility={visibility:.6f} "
+                f"mean_px={float(mean_px)} "
+                f"z_min={z_min:.6f} "
+                f"z_max={z_max:.6f} "
+                f"t_cam_to_lidar={[float(x) for x in t.tolist()]} "
+                f"t_lidar_to_cam={[float(x) for x in t_lidar_cam.tolist()]} "
+                f"sample_uv={sample_uv}"
+            )
+
         self.pub_vis.publish(Float32(data=float(visibility)))
         self.pub_px_legacy.publish(Float32(data=float(mean_px)))
         self.pub_px.publish(Float32(data=float(mean_px)))
+
+    def destroy_node(self):
+        super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = ReprojectionEvaluatorNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

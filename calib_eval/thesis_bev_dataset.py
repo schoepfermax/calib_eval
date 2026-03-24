@@ -30,6 +30,7 @@ def _default_reference_yaml_paths() -> Dict[str, str]:
     return {
         "static_mount_h1": os.path.join(ref_dir, "static_mount_h1_reference.yaml"),
         "static_mount_h2": os.path.join(ref_dir, "static_mount_h2_reference.yaml"),
+        "dynamic_rig": os.path.join(ref_dir, "dynamic_reference.yaml"),
     }
 
 
@@ -108,6 +109,7 @@ class ThesisBEVDataset:
         combined_index: bool = False,
         static_mount_h1_reference_yaml: str = "",
         static_mount_h2_reference_yaml: str = "",
+        dynamic_reference_yaml: str = "",
     ):
         self.dataset_root = os.path.abspath(os.path.expanduser(dataset_root))
         self.split = split
@@ -131,6 +133,11 @@ class ThesisBEVDataset:
                 if static_mount_h2_reference_yaml.strip()
                 else default_refs["static_mount_h2"]
             ),
+            "dynamic_rig": (
+                dynamic_reference_yaml.strip()
+                if dynamic_reference_yaml.strip()
+                else default_refs["dynamic_rig"]
+            ),
         }
 
         self.reference_yaml_data = {
@@ -140,6 +147,9 @@ class ThesisBEVDataset:
             "static_mount_h2": _load_reference_yaml(
                 self.reference_yaml_paths["static_mount_h2"]
             ),
+            "dynamic_rig": _load_reference_yaml(
+                self.reference_yaml_paths["dynamic_rig"]
+            ),
         }
 
         self.reference_T_lidar_to_camera = {
@@ -147,7 +157,7 @@ class ThesisBEVDataset:
                 self.reference_yaml_data[rig_id]["translation"],
                 self.reference_yaml_data[rig_id]["rotation_quat"],
             )
-            for rig_id in ["static_mount_h1", "static_mount_h2"]
+            for rig_id in ["static_mount_h1", "static_mount_h2", "dynamic_rig"]
         }
 
     def __len__(self) -> int:
@@ -155,7 +165,7 @@ class ThesisBEVDataset:
 
     def _infer_rig_config_id(self, run_name: str) -> str:
         """
-        Determine which static-rig reference to use.
+        Determine which reference to use.
 
         Supported cases:
           1) dataset_root points directly to static_mount_h1 or static_mount_h2
@@ -163,6 +173,7 @@ class ThesisBEVDataset:
              with the agreed mapping:
                  run_001..008 -> h1
                  run_009..016 -> h2
+          3) dataset_root points to dynamic_rig
         """
         root_name = os.path.basename(self.dataset_root.rstrip(os.sep))
 
@@ -188,9 +199,14 @@ class ThesisBEVDataset:
                 f"Combined dataset run number outside expected range 1..16: {run_name}"
             )
 
+        if root_name == "dynamic_rig":
+            return "dynamic_rig"
+
         run_name_l = run_name.lower()
         root_l = self.dataset_root.lower()
 
+        if "dynamic" in root_l or "dynamic" in run_name_l:
+            return "dynamic_rig"
         if "h1" in root_l or "h1" in run_name_l:
             return "static_mount_h1"
         if "h2" in root_l or "h2" in run_name_l:
@@ -200,7 +216,7 @@ class ThesisBEVDataset:
             "Could not infer rig_config_id for BEV training dataset.\n"
             f"  dataset_root={self.dataset_root}\n"
             f"  run_name={run_name}\n"
-            "Expected static_mount_h1, static_mount_h2, or static_mount_h1_h2."
+            "Expected static_mount_h1, static_mount_h2, static_mount_h1_h2, or dynamic_rig."
         )
 
     def __getitem__(self, idx: int):

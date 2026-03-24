@@ -63,6 +63,7 @@ def parse_args():
 
     parser.add_argument("--static_mount_h1_reference_yaml", type=str, default="")
     parser.add_argument("--static_mount_h2_reference_yaml", type=str, default="")
+    parser.add_argument("--dynamic_reference_yaml", type=str, default="")
 
     parser.add_argument("--log_dir", type=str, default="./logs/thesis_bev")
     parser.add_argument("--label", type=str, default=None)
@@ -284,6 +285,7 @@ def main():
         combined_index=bool(args.combined_index),
         static_mount_h1_reference_yaml=args.static_mount_h1_reference_yaml,
         static_mount_h2_reference_yaml=args.static_mount_h2_reference_yaml,
+        dynamic_reference_yaml=args.dynamic_reference_yaml,
     )
 
     val_dataset = ThesisBEVDataset(
@@ -292,6 +294,7 @@ def main():
         combined_index=bool(args.combined_index),
         static_mount_h1_reference_yaml=args.static_mount_h1_reference_yaml,
         static_mount_h2_reference_yaml=args.static_mount_h2_reference_yaml,
+        dynamic_reference_yaml=args.dynamic_reference_yaml,
     )
 
     train_loader = DataLoader(

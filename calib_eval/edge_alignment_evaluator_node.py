@@ -50,6 +50,7 @@ class EdgeAlignmentEvaluatorNode(Node):
         self.bridge = CvBridge()
 
         self.declare_parameter('use_dynamic_rig', False)
+        self.declare_parameter('dynamic_representation', '')
         self.declare_parameter('image_topic', '/eval/clean/image')
         self.declare_parameter('lidar_topic', '')
         self.declare_parameter('extrinsics_topic', '/eval/estimated_extrinsics')
@@ -84,8 +85,8 @@ class EdgeAlignmentEvaluatorNode(Node):
 
         self.image_sub = self.create_subscription(Image, image_topic, self.image_callback, 10)
 
-        use_dynamic = bool(self.get_parameter('use_dynamic_rig').value)
-        if use_dynamic:
+        use_scan_input = self._use_scan_input(lidar_topic)
+        if use_scan_input:
             self.lidar_sub = self.create_subscription(LaserScan, lidar_topic, self.scan_callback, 10)
         else:
             self.lidar_sub = self.create_subscription(PointCloud2, lidar_topic, self.lidar_callback, 10)
@@ -111,17 +112,50 @@ class EdgeAlignmentEvaluatorNode(Node):
             f"  lidar_topic={lidar_topic}\n"
             f"  extrinsics_topic={extr_topic}\n"
             f"  use_dynamic_rig={bool(self.get_parameter('use_dynamic_rig').value)}\n"
+            f"  dynamic_representation={str(self.get_parameter('dynamic_representation').value).strip() or '<auto>'}\n"
             f"  evaluation_config_path={cfg_path}\n"
             f"  camera_info_topic={cam_info_topic} (preferred if available; YAML fallback)\n"
             f"  edge_hit_threshold_px={self.edge_hit_threshold_px}"
         )
 
+    def _use_scan_input(self, resolved_lidar_topic=None):
+        """
+        Decide whether the lidar input topic should be treated as LaserScan or PointCloud2.
+
+        Dynamic-rig evaluation is representation-dependent:
+          - raw_scan      -> LaserScan
+          - pseudo_points -> PointCloud2
+
+        To avoid requiring an immediate synchronized launch-file change, we also
+        infer from the resolved topic name when possible:
+          - .../scan   -> LaserScan
+          - .../points -> PointCloud2
+
+        If dynamic_representation is unset and the topic is ambiguous, we keep
+        the previous behavior for backward compatibility:
+          - dynamic rig defaults to LaserScan
+          - static rig defaults to PointCloud2
+        """
+        dynamic_representation = str(self.get_parameter('dynamic_representation').value).strip().lower()
+        if dynamic_representation == 'raw_scan':
+            return True
+        if dynamic_representation == 'pseudo_points':
+            return False
+
+        topic = (resolved_lidar_topic or '').strip()
+        if topic.endswith('/scan'):
+            return True
+        if topic.endswith('/points'):
+            return False
+
+        use_dynamic = bool(self.get_parameter('use_dynamic_rig').value)
+        return use_dynamic
+
     def _resolve_lidar_topic(self):
         explicit = str(self.get_parameter('lidar_topic').value).strip()
         if explicit:
             return explicit
-        use_dynamic = bool(self.get_parameter('use_dynamic_rig').value)
-        return '/eval/clean/scan' if use_dynamic else '/eval/clean/points'
+        return '/eval/clean/scan' if self._use_scan_input() else '/eval/clean/points'
 
     def _resolve_eval_config_path(self, user_path: str) -> str:
         def exists(p): return p and os.path.exists(os.path.expanduser(p))
