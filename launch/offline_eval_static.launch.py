@@ -39,6 +39,7 @@ def generate_launch_description():
     camera_info_topic_cfg = LaunchConfiguration("camera_info_topic")
     estimated_extrinsics_topic_cfg = LaunchConfiguration("estimated_extrinsics_topic")
     reference_extrinsics_topic_cfg = LaunchConfiguration("reference_extrinsics_topic")
+    save_final_transform_output_path_cfg = LaunchConfiguration("save_final_transform_output_path")
 
     # Publish rates (parametrized for quick sanity tests vs slower full runs)
     dataset_publish_rate_hz_cfg = LaunchConfiguration("dataset_publish_rate_hz")
@@ -176,6 +177,12 @@ def generate_launch_description():
             description="Optional. Override reference YAML path. If empty, node resolves via rig_config_id."
         ),
 
+        DeclareLaunchArgument(
+            "save_final_transform_output_path",
+            default_value="/home/hs-coburg.de/rav4243s/evaluation_results/estimated_extrinsics.yaml",
+            description="Rolling YAML path that is continuously updated with the latest /eval/estimated_extrinsics during the run."
+        ),
+
         # 1) Dataset playback
         Node(
             package="calib_eval",
@@ -275,7 +282,19 @@ def generate_launch_description():
             }],
         ),
 
-        # 5) System-level aggregator
+        # 5) Rolling final-transform saver
+        Node(
+            package="calib_eval",
+            executable="save_final_transform",
+            name="save_final_transform",
+            output="screen",
+            parameters=[{
+                "extrinsics_topic": estimated_extrinsics_topic_cfg,
+                "output_path": save_final_transform_output_path_cfg,
+            }],
+        ),
+
+        # 6) System-level aggregator
         Node(
             package="calib_eval",
             executable="evaluation_pipeline_node",

@@ -15,13 +15,15 @@
 #   2) archive_reconstruct
 #      - read archived run_info.txt
 #      - load one chosen sample from dataset
-#      - load checkpoint from archive metadata
-#      - reconstruct ONE estimated transform by single-frame inference
+#      - prefer a saved estimated extrinsics YAML from the archive when present
+#      - otherwise fall back to deterministic single-frame inference
 #
 # IMPORTANT:
-#   - archived runs do not store estimated extrinsics directly
-#   - therefore archive_reconstruct mode performs deterministic single-frame
-#     inference for the selected sample; it does NOT rerun the full experiment
+#   - newer archives may contain a saved estimated extrinsics YAML
+#   - older archives may not
+#   - when no saved YAML is present, archive_reconstruct mode falls back to
+#     single-frame inference for the selected sample; it does NOT rerun the
+#     full experiment
 #
 # Published topics:
 #   /viz/reference_overlay
@@ -132,7 +134,17 @@ class ExtrinsicProjectionVisualizer(Node):
         self.declare_parameter("reference_color_bgr", [0, 255, 0])   # green
         self.declare_parameter("estimated_color_bgr", [0, 0, 255])   # red
         self.declare_parameter("point_radius_px", 1)
-        self.declare_parameter("bottom_banner_height_px", 44)
+        self.declare_parameter("point_stride", 2)
+        self.declare_parameter("bottom_banner_height_px", 120)
+        self.declare_parameter("banner_background_bgr", [228, 228, 228])
+        self.declare_parameter("banner_text_bgr", [0, 0, 0])
+        self.declare_parameter("banner_font_scale", 1.15)
+        self.declare_parameter("banner_text_thickness", 3)
+        self.declare_parameter("banner_outline_thickness", 6)
+        self.declare_parameter("banner_side_margin_px", 28)
+        self.declare_parameter("banner_top_bottom_margin_px", 18)
+        self.declare_parameter("banner_line_gap_px", 12)
+        self.declare_parameter("banner_force_uppercase", True)
 
         # Output topics
         self.declare_parameter("reference_overlay_topic", "/viz/reference_overlay")
@@ -148,7 +160,17 @@ class ExtrinsicProjectionVisualizer(Node):
         self.reference_color_bgr = tuple(int(v) for v in self.get_parameter("reference_color_bgr").value)
         self.estimated_color_bgr = tuple(int(v) for v in self.get_parameter("estimated_color_bgr").value)
         self.point_radius_px = int(self.get_parameter("point_radius_px").value)
+        self.point_stride = max(1, int(self.get_parameter("point_stride").value))
         self.bottom_banner_height_px = int(self.get_parameter("bottom_banner_height_px").value)
+        self.banner_background_bgr = tuple(int(v) for v in self.get_parameter("banner_background_bgr").value)
+        self.banner_text_bgr = tuple(int(v) for v in self.get_parameter("banner_text_bgr").value)
+        self.banner_font_scale = float(self.get_parameter("banner_font_scale").value)
+        self.banner_text_thickness = int(self.get_parameter("banner_text_thickness").value)
+        self.banner_outline_thickness = int(self.get_parameter("banner_outline_thickness").value)
+        self.banner_side_margin_px = int(self.get_parameter("banner_side_margin_px").value)
+        self.banner_top_bottom_margin_px = int(self.get_parameter("banner_top_bottom_margin_px").value)
+        self.banner_line_gap_px = int(self.get_parameter("banner_line_gap_px").value)
+        self.banner_force_uppercase = bool(self.get_parameter("banner_force_uppercase").value)
 
         # Published image topics for RViz panels
         self.ref_pub = self.create_publisher(Image, self.reference_overlay_topic, 10)
@@ -165,6 +187,7 @@ class ExtrinsicProjectionVisualizer(Node):
         self.archive_meta: Dict = {}
         self.archive_sample: Optional[Dict] = None
         self.archive_ref_pose: Optional[Tuple[np.ndarray, np.ndarray]] = None
+        self.archive_est_yaml_path: str = ""
         self.archive_est_pose: Optional[Tuple[np.ndarray, np.ndarray]] = None
         self.archive_render_done = False
 
@@ -262,31 +285,49 @@ class ExtrinsicProjectionVisualizer(Node):
         elif self.model_name == "lccnet":
             self.model_name = "lccnet"
 
-        ckpt_path = str(self.archive_meta.get("checkpoint", "")).strip()
-        if not ckpt_path or not os.path.isfile(ckpt_path):
-            raise RuntimeError(f"Checkpoint missing or invalid in run_info.txt: {ckpt_path}")
-
-        self.model = create_model_from_registry(
-            model_name=self.model_name,
-            checkpoint_path=ckpt_path,
-            device="cuda" if self.device.type == "cuda" else "cpu",
-            logger=self.get_logger(),
+        # Preferred path for newer archives:
+        #   use the saved final estimated extrinsics YAML directly when present.
+        self.archive_est_yaml_path, self.archive_est_pose = self._load_archive_estimated_pose(
+            archive_dir=archive_dir,
+            meta=self.archive_meta,
         )
 
-        # Compute estimated pose once for the chosen figure frame.
-        self.archive_est_pose = self._infer_pose_for_sample(
-            model_name=self.model_name,
-            model_wrapper=self.model,
-            sample=self.archive_sample,
-            ref_pose=self.archive_ref_pose,
-        )
+        if self.archive_est_pose is not None:
+            t_est, q_est = self.archive_est_pose
+            self.get_logger().info(
+                "Archive reconstruction using saved estimated extrinsics YAML:\n"
+                f"  estimated_yaml_path={self.archive_est_yaml_path}\n"
+                f"  translation = [{float(t_est[0]):.9f}, {float(t_est[1]):.9f}, {float(t_est[2]):.9f}]\n"
+                f"  quaternion_xyzw = [{float(q_est[0]):.9f}, {float(q_est[1]):.9f}, {float(q_est[2]):.9f}, {float(q_est[3]):.9f}]"
+            )
+        else:
+            # Legacy fallback for older archives with no saved estimated YAML:
+            # keep the checkpoint-driven single-frame reconstruction path so
+            # historical runs remain visualizable.
+            ckpt_path = str(self.archive_meta.get("checkpoint", "")).strip()
+            if not ckpt_path or not os.path.isfile(ckpt_path):
+                raise RuntimeError(f"Checkpoint missing or invalid in run_info.txt: {ckpt_path}")
 
-        t_est, q_est = self.archive_est_pose
-        self.get_logger().info(
-            "Archive reconstruction estimated extrinsics (camera -> lidar):\n"
-            f"  translation = [{float(t_est[0]):.9f}, {float(t_est[1]):.9f}, {float(t_est[2]):.9f}]\n"
-            f"  quaternion_xyzw = [{float(q_est[0]):.9f}, {float(q_est[1]):.9f}, {float(q_est[2]):.9f}, {float(q_est[3]):.9f}]"
-        )
+            self.model = create_model_from_registry(
+                model_name=self.model_name,
+                checkpoint_path=ckpt_path,
+                device="cuda" if self.device.type == "cuda" else "cpu",
+                logger=self.get_logger(),
+            )
+
+            self.archive_est_pose = self._infer_pose_for_sample(
+                model_name=self.model_name,
+                model_wrapper=self.model,
+                sample=self.archive_sample,
+                ref_pose=self.archive_ref_pose,
+            )
+
+            t_est, q_est = self.archive_est_pose
+            self.get_logger().info(
+                "Archive reconstruction fallback: no saved estimated YAML found; using single-frame inference.\n"
+                f"  translation = [{float(t_est[0]):.9f}, {float(t_est[1]):.9f}, {float(t_est[2]):.9f}]\n"
+                f"  quaternion_xyzw = [{float(q_est[0]):.9f}, {float(q_est[1]):.9f}, {float(q_est[2]):.9f}, {float(q_est[3]):.9f}]"
+            )
 
         # Publish the rendered images periodically so RViz can attach later.
         self.timer = self.create_timer(0.5, self._render_archive_tick)
@@ -299,6 +340,7 @@ class ExtrinsicProjectionVisualizer(Node):
             f"  dataset_root={self.archive_meta.get('dataset_root', '')}\n"
             f"  sample_key={self.archive_meta.get('sample_key', '')}\n"
             f"  reference_yaml_path={self.archive_meta.get('reference_yaml_path', '')}\n"
+            f"  estimated_yaml_path={self.archive_est_yaml_path}\n"
             f"  reference_overlay_topic={self.reference_overlay_topic}\n"
             f"  estimated_overlay_topic={self.estimated_overlay_topic}\n"
         )
@@ -337,6 +379,30 @@ class ExtrinsicProjectionVisualizer(Node):
             return cand
 
         raise RuntimeError(f"Could not resolve reference YAML from run_info.txt: {ref_raw}")
+
+    def _resolve_estimated_yaml_from_archive(self, archive_dir: str, meta: Dict) -> str:
+        """
+        Standard archive convention:
+
+          <archive_dir>/estimated_extrinsics.yaml
+
+        This is the preferred and intended path for newer runs.
+
+        Legacy note:
+          Older archives may not contain estimated_extrinsics.yaml.
+          In that case the visualizer falls back to the archived checkpoint +
+          single-frame inference path below.
+        """
+        cand = os.path.join(archive_dir, "estimated_extrinsics.yaml")
+        if os.path.isfile(cand):
+            return cand
+        return ""
+
+    def _load_archive_estimated_pose(self, archive_dir: str, meta: Dict) -> Tuple[str, Optional[Tuple[np.ndarray, np.ndarray]]]:
+        yaml_path = self._resolve_estimated_yaml_from_archive(archive_dir, meta)
+        if not yaml_path:
+            return "", None
+        return yaml_path, self._load_pose_from_yaml(yaml_path)
 
     def _load_archive_sample(self, dataset_root: str, sample_key: str) -> Dict:
         ds = UniversalCalibrationDataset(dataset_root=dataset_root, split=None, combined_index=True)
@@ -707,7 +773,9 @@ class ExtrinsicProjectionVisualizer(Node):
 
         out = image_bgr.copy()
 
-        for u, v in uv:
+        uv_iter = uv[::self.point_stride] if self.point_stride > 1 else uv
+
+        for u, v in uv_iter:
             ui = int(u)
             vi = int(v)
             if 0 <= ui < out.shape[1] and 0 <= vi < out.shape[0]:
@@ -718,50 +786,194 @@ class ExtrinsicProjectionVisualizer(Node):
     def _make_metadata_text(self, default_mode_label: str) -> str:
         user_text = str(self.get_parameter("metadata_text").value).strip()
         if user_text:
-            return user_text
-
-        if self.input_mode == "archive_reconstruct":
+            text = user_text
+        elif self.input_mode == "archive_reconstruct":
             model = str(self.archive_meta.get("model", ""))
             train_ds = str(self.archive_meta.get("train_dataset", ""))
             eval_ds = str(self.archive_meta.get("eval_dataset", ""))
             ckpt = os.path.basename(str(self.archive_meta.get("checkpoint", "")))
             sample_key = str(self.archive_meta.get("sample_key", ""))
-            return f"{default_mode_label} | {model} | train={train_ds} | eval={eval_ds} | {ckpt} | {sample_key}"
+            text = f"{default_mode_label} | {model} | train={train_ds} | eval={eval_ds} | {ckpt} | {sample_key}"
+        else:
+            text = default_mode_label
 
-        return default_mode_label
+        if self.banner_force_uppercase:
+            text = text.upper()
+        return text
 
-    def _draw_bottom_banner(self, image_bgr, text: str) -> np.ndarray:
-        out = image_bgr.copy()
-        h, w = out.shape[:2]
-        banner_h = min(self.bottom_banner_height_px, max(30, h // 6))
+    def _split_banner_text_into_two_lines(
+        self,
+        text: str,
+        font,
+        scale: float,
+        thickness: int,
+        max_width_px: int,
+    ):
+        """
+        Split metadata into at most two centered lines.
 
-        # Dark grey banner
-        cv2.rectangle(
-            out,
-            (0, h - banner_h),
-            (w - 1, h - 1),
-            color=(40, 40, 40),
-            thickness=-1,
-        )
+        Preference:
+          - break on separators already present in thesis metadata
+          - keep the first line slightly shorter/equal when possible
+          - if no good separator split exists, fall back to a word-based split
+        """
+        separators = [" | ", "  ", " "]
 
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        scale = 0.55
-        thickness = 1
+        def width_px(s: str) -> int:
+            if not s:
+                return 0
+            return int(cv2.getTextSize(s, font, scale, thickness)[0][0])
 
-        ((tw, th), _) = cv2.getTextSize(text, font, scale, thickness)
-        x = max(8, (w - tw) // 2)
-        y = h - max(10, (banner_h - th) // 2)
+        best_pair = None
+        best_score = None
+
+        for sep in separators:
+            parts = text.split(sep)
+            if len(parts) < 2:
+                continue
+
+            for i in range(1, len(parts)):
+                left = sep.join(parts[:i]).strip()
+                right = sep.join(parts[i:]).strip()
+                if not left or not right:
+                    continue
+
+                left_w = width_px(left)
+                right_w = width_px(right)
+
+                if left_w <= max_width_px and right_w <= max_width_px:
+                    score = abs(left_w - right_w)
+                    if best_pair is None or score < best_score:
+                        best_pair = (left, right)
+                        best_score = score
+
+        if best_pair is not None:
+            return [best_pair[0], best_pair[1]]
+
+        words = text.split()
+        if len(words) <= 1:
+            return [text]
+
+        best_pair = None
+        best_score = None
+        for i in range(1, len(words)):
+            left = " ".join(words[:i]).strip()
+            right = " ".join(words[i:]).strip()
+            if not left or not right:
+                continue
+
+            left_w = width_px(left)
+            right_w = width_px(right)
+
+            if left_w <= max_width_px and right_w <= max_width_px:
+                score = abs(left_w - right_w)
+                if best_pair is None or score < best_score:
+                    best_pair = (left, right)
+                    best_score = score
+
+        if best_pair is not None:
+            return [best_pair[0], best_pair[1]]
+
+        return [text]
+
+    def _draw_text_with_outline(
+        self,
+        image_bgr,
+        text: str,
+        origin_xy,
+        font,
+        scale: float,
+        text_color_bgr,
+        text_thickness: int,
+        outline_thickness: int,
+    ):
+        x, y = origin_xy
+        if outline_thickness > 0:
+            cv2.putText(
+                image_bgr,
+                text,
+                (x, y),
+                font,
+                scale,
+                (255, 255, 255),
+                outline_thickness,
+                lineType=cv2.LINE_AA,
+            )
 
         cv2.putText(
-            out,
+            image_bgr,
             text,
             (x, y),
             font,
             scale,
-            (255, 255, 255),
-            thickness,
+            text_color_bgr,
+            text_thickness,
             lineType=cv2.LINE_AA,
         )
+
+    def _draw_bottom_banner(self, image_bgr, text: str) -> np.ndarray:
+        out = image_bgr.copy()
+        h, w = out.shape[:2]
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = max(0.5, float(self.banner_font_scale))
+        text_thickness = max(1, int(self.banner_text_thickness))
+        outline_thickness = max(0, int(self.banner_outline_thickness))
+        side_margin = max(8, int(self.banner_side_margin_px))
+        top_bottom_margin = max(6, int(self.banner_top_bottom_margin_px))
+        line_gap = max(4, int(self.banner_line_gap_px))
+
+        max_text_width = max(50, w - 2 * side_margin)
+        lines = self._split_banner_text_into_two_lines(
+            text=text,
+            font=font,
+            scale=scale,
+            thickness=text_thickness,
+            max_width_px=max_text_width,
+        )
+
+        if len(lines) > 2:
+            lines = lines[:2]
+
+        line_sizes = [cv2.getTextSize(line, font, scale, text_thickness)[0] for line in lines]
+        line_heights = [size[1] for size in line_sizes]
+        total_text_height = sum(line_heights)
+        if len(lines) == 2:
+            total_text_height += line_gap
+
+        requested_banner_h = max(
+            int(self.bottom_banner_height_px),
+            total_text_height + 2 * top_bottom_margin,
+        )
+        banner_h = min(requested_banner_h, max(40, h // 4))
+
+        cv2.rectangle(
+            out,
+            (0, h - banner_h),
+            (w - 1, h - 1),
+            color=self.banner_background_bgr,
+            thickness=-1,
+        )
+
+        current_y = h - banner_h + top_bottom_margin + line_heights[0]
+        for idx, line in enumerate(lines):
+            line_w, line_h = line_sizes[idx]
+            x = max(side_margin, (w - line_w) // 2)
+
+            self._draw_text_with_outline(
+                out,
+                line,
+                (x, current_y),
+                font,
+                scale,
+                self.banner_text_bgr,
+                text_thickness,
+                outline_thickness,
+            )
+
+            if idx + 1 < len(lines):
+                current_y += line_h + line_gap
+
         return out
 
     def _publish_overlay_pair(self, ref_img_bgr, est_img_bgr):

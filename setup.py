@@ -37,6 +37,7 @@ setup(
             'offline2d = calib_eval.offline2d:main',
             'online2d = calib_eval.online2d:main',
             'visualizer = calib_eval.extrinsic_projection_visualizer:main',
+            'save_final_transform = calib_eval.save_final_transform:main',
         ],
     },
 )
