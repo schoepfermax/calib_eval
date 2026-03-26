@@ -13,6 +13,16 @@
 #   - sequential / online-style in its update logic
 #   - keeps the best-so-far transform
 #   - freezes refinement once meaningful deterioration is detected
+#
+# Diagnostic notes:
+#   - This version adds explicit logging so we can see whether online2d
+#     is:
+#         * receiving usable samples
+#         * entering window evaluation
+#         * finding candidate improvements
+#         * rejecting updates due to gating / limits
+#         * freezing due to deterioration
+#   - The actual refinement behavior is intentionally unchanged here.
 ###############################################
 
 import math
@@ -25,7 +35,10 @@ from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
+from collections import deque
+
 from calib_eval import dynamic_utils as utils
+
 
 class Online2DNode(Node):
     def __init__(self):
@@ -40,7 +53,7 @@ class Online2DNode(Node):
         self.declare_parameter("scan_topic", "/eval/clean/scan")
         self.declare_parameter("camera_info_topic", "/eval/camera_info")
         self.declare_parameter("odom_topic", "/eval/odom")
-        self.declare_parameter("input_extrinsics_topic", "/eval/estimated_extrinsics")
+        self.declare_parameter("input_extrinsics_topic", "/eval/offline2d_extrinsics")
         self.declare_parameter("output_extrinsics_topic", "/eval/estimated_extrinsics")
 
         self.declare_parameter("camera_frame_id", "camera")
@@ -58,7 +71,7 @@ class Online2DNode(Node):
         self.declare_parameter("max_translation_step_m", 0.05)
         self.declare_parameter("max_rotation_step_deg", 2.0)
         self.declare_parameter("min_improvement", 1e-4)
-        self.declare_parameter("max_sync_dt_sec", 0.05)
+        self.declare_parameter("max_sync_dt_sec", 1.0)
 
         self.declare_parameter("canny_low", 100)
         self.declare_parameter("canny_high", 200)
@@ -106,6 +119,7 @@ class Online2DNode(Node):
             "visibility_penalty_value": float(self.get_parameter("visibility_penalty_value").value),
         }
 
+
         self.edge_ratio_gate = float(self.get_parameter("edge_ratio_gate").value)
         self.mean_grad_gate = float(self.get_parameter("mean_grad_gate").value)
 
@@ -139,8 +153,37 @@ class Online2DNode(Node):
         self.num_windows_evaluated = 0
         self.num_windows_rejected = 0
 
+        ###############################################
+        # TIME-SYNC BUFFERS (NEW)
+        ###############################################
+        self.scan_buffer = deque(maxlen=50)
+        self.odom_buffer = deque(maxlen=50)
+
+        self.pre_init_window = deque(maxlen=max(self.window_size, self.min_window_size))
         self.sample_window = deque(maxlen=max(self.window_size, self.min_window_size))
         self.window_counter = 0
+
+        ###############################################
+        # DIAGNOSTIC COUNTERS
+        ###############################################
+        self.total_images_seen = 0
+        self.total_samples_buffered = 0
+
+        self.skip_no_intrinsics = 0
+        self.skip_no_init = 0
+        self.skip_no_scan = 0
+        self.skip_no_odom = 0
+        self.skip_no_stamps = 0
+        self.skip_sync_scan = 0
+        self.skip_sync_odom = 0
+        self.skip_sync_cam = 0
+        self.skip_scene_gate = 0
+        self.skip_small_window = 0
+        self.skip_stride = 0
+        self.skip_low_motion = 0
+
+        self.last_skip_log_total = 0
+        self.last_window_eval_log_count = 0
 
         ###############################################
         # PUB / SUB
@@ -244,6 +287,49 @@ class Online2DNode(Node):
         return int(stamp.sec) * 1000000000 + int(stamp.nanosec)
 
     ###############################################
+    # DIAGNOSTIC HELPERS
+    ###############################################
+    def _maybe_log_skip_summary(self):
+        current_total = (
+            self.skip_no_intrinsics
+            + self.skip_no_init
+            + self.skip_no_scan
+            + self.skip_no_odom
+            + self.skip_no_stamps
+            + self.skip_sync_scan
+            + self.skip_sync_odom
+            + self.skip_sync_cam
+            + self.skip_scene_gate
+            + self.skip_small_window
+            + self.skip_stride
+            + self.skip_low_motion
+        )
+
+        # Log every 100 new skip events to avoid flooding.
+        if current_total - self.last_skip_log_total < 100:
+            return
+
+        self.last_skip_log_total = current_total
+
+        self.get_logger().info(
+            "online2d skip summary:\n"
+            f"  total_images_seen={self.total_images_seen}\n"
+            f"  total_samples_buffered={self.total_samples_buffered}\n"
+            f"  skip_no_intrinsics={self.skip_no_intrinsics}\n"
+            f"  skip_no_init={self.skip_no_init}\n"
+            f"  skip_no_scan={self.skip_no_scan}\n"
+            f"  skip_no_odom={self.skip_no_odom}\n"
+            f"  skip_no_stamps={self.skip_no_stamps}\n"
+            f"  skip_sync_scan={self.skip_sync_scan}\n"
+            f"  skip_sync_odom={self.skip_sync_odom}\n"
+            f"  skip_sync_cam={self.skip_sync_cam}\n"
+            f"  skip_scene_gate={self.skip_scene_gate}\n"
+            f"  skip_small_window={self.skip_small_window}\n"
+            f"  skip_stride={self.skip_stride}\n"
+            f"  skip_low_motion={self.skip_low_motion}"
+        )
+
+    ###############################################
     # CALLBACKS
     ###############################################
     def _caminfo_cb(self, msg: CameraInfo):
@@ -253,13 +339,35 @@ class Online2DNode(Node):
             self.intrinsics = self._camera_info_to_intrinsics_dict(msg)
             self.get_logger().info("online2d received intrinsics.")
 
-    def _scan_cb(self, msg: LaserScan):
-        self.latest_scan = self._scan_msg_to_scan_dict(msg)
-        self.latest_scan_stamp_ns = self._stamp_to_ns(msg.header.stamp)
+    def scan_cb(self, msg):
+        stamp_ns = self._stamp_to_ns(msg.header.stamp)
+        scan_dict = self._scan_msg_to_scan_dict(msg)
 
-    def _odom_cb(self, msg: Odometry):
-        self.latest_odom = self._odom_msg_to_dict(msg)
-        self.latest_odom_stamp_ns = self._stamp_to_ns(msg.header.stamp)
+        self.latest_scan = scan_dict
+        self.latest_scan_stamp_ns = stamp_ns
+
+        self.scan_buffer.append({
+            "stamp_ns": stamp_ns,
+            "scan": scan_dict
+        })
+
+    def _scan_cb(self, msg):
+        self.scan_cb(msg)
+
+    def odom_cb(self, msg):
+        stamp_ns = self._stamp_to_ns(msg.header.stamp)
+        odom_dict = self._odom_msg_to_dict(msg)
+
+        self.latest_odom = odom_dict
+        self.latest_odom_stamp_ns = stamp_ns
+
+        self.odom_buffer.append({
+            "stamp_ns": stamp_ns,
+            "odom": odom_dict
+        })
+
+    def _odom_cb(self, msg):
+        self.odom_cb(msg)
 
     def _extrinsics_cb(self, msg: TransformStamped):
         # Capture the first incoming extrinsics as the initialization from offline2d,
@@ -273,31 +381,91 @@ class Online2DNode(Node):
         self.best_q = self.current_q.copy()
         self.initial_extrinsics_received = True
 
+        # Publish immediately so evaluators always have a valid estimated transform,
+        # even if no refinement update is later accepted.
+        self._publish_transform(self.current_t, self.current_q)
+
+        if len(self.pre_init_window) > 0:
+            promoted_count = len(self.pre_init_window)
+            for bundle in self.pre_init_window:
+                self.sample_window.append(bundle)
+            self.window_counter += promoted_count
+            self.total_samples_buffered += promoted_count
+            self.pre_init_window.clear()
+
+            self.get_logger().info(
+                f"online2d promoted buffered pre-init samples into active window: {promoted_count}"
+            )
+
+            if len(self.sample_window) >= self.min_window_size:
+                self._evaluate_window()
+
         self.get_logger().info(
-            "online2d received initial extrinsics and is ready to refine."
+            "online2d received initial extrinsics, published them, and is ready to refine."
         )
 
     def _image_cb(self, msg: Image):
+        self.total_images_seen += 1
+
         if self.refinement_frozen:
             return
+
         if self.intrinsics is None:
+            self.skip_no_intrinsics += 1
+            self._maybe_log_skip_summary()
             return
+
+        # ------------------------------------------------------------
+        # PRE-INIT PHASE:
+        # The offline dataset player already publishes image + scan + odom
+        # from the SAME dataset sample using the SAME playback stamp.
+        # So for dynamic 2d offline playback, we should consume the latest
+        # current tuple directly instead of re-solving synchronization here.
+        # ------------------------------------------------------------
         if not self.initial_extrinsics_received:
-            return
-        if self.latest_scan is None or self.latest_odom is None:
-            return
-        if self.latest_scan_stamp_ns is None or self.latest_odom_stamp_ns is None or self.latest_camera_info_stamp_ns is None:
+            if self.latest_scan is None:
+                self.skip_no_scan += 1
+                self._maybe_log_skip_summary()
+                return
+
+            if self.latest_odom is None:
+                self.skip_no_odom += 1
+                self._maybe_log_skip_summary()
+                return
+
+            image_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            self.pre_init_window.append({
+                "image": image_bgr,
+                "scan": self.latest_scan,
+                "intrinsics": self.intrinsics,
+                "weight": 1.0,
+                "odom": self.latest_odom,
+            })
+            self.total_samples_buffered += 1
+
+            if len(self.pre_init_window) == 1 or (len(self.pre_init_window) % 10) == 0:
+                self.get_logger().info(
+                    f"online2d buffered pre-init samples: {len(self.pre_init_window)}"
+                )
             return
 
-        image_stamp_ns = self._stamp_to_ns(msg.header.stamp)
-        max_sync_dt_ns = int(self.max_sync_dt_sec * 1e9)
+        # ------------------------------------------------------------
+        # POST-INIT PHASE:
+        # Same playback contract applies here as well.
+        # Consume the latest scan + odom belonging to the current played sample.
+        # ------------------------------------------------------------
+        if self.latest_scan is None:
+            self.skip_no_scan += 1
+            self._maybe_log_skip_summary()
+            return
 
-        if abs(image_stamp_ns - self.latest_scan_stamp_ns) > max_sync_dt_ns:
+        if self.latest_odom is None:
+            self.skip_no_odom += 1
+            self._maybe_log_skip_summary()
             return
-        if abs(image_stamp_ns - self.latest_odom_stamp_ns) > max_sync_dt_ns:
-            return
-        if abs(image_stamp_ns - self.latest_camera_info_stamp_ns) > max_sync_dt_ns:
-            return
+
+        scan = self.latest_scan
+        odom = self.latest_odom
 
         image_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         _, _, _, edge_ratio, mean_grad = utils.compute_edge_map_and_distance_transform(
@@ -309,24 +477,51 @@ class Online2DNode(Node):
 
         # Scene-quality gate: skip very weak frames.
         if edge_ratio < self.edge_ratio_gate or mean_grad < self.mean_grad_gate:
+            self.skip_scene_gate += 1
+            self._maybe_log_skip_summary()
             return
 
         bundle = {
             "image": image_bgr,
-            "scan": self.latest_scan,
+            "scan": scan,
             "intrinsics": self.intrinsics,
             "weight": 1.0,
-            "odom": self.latest_odom,
+            "odom": odom,
         }
         self.sample_window.append(bundle)
         self.window_counter += 1
+        self.total_samples_buffered += 1
+
+        if self.total_samples_buffered == 1 or (self.total_samples_buffered % 25) == 0:
+            self.get_logger().info(
+                f"online2d accepted samples into window: total_seen={self.total_samples_buffered}, "
+                f"window_len={len(self.sample_window)}"
+            )
 
         if len(self.sample_window) < self.min_window_size:
+            self.skip_small_window += 1
+            self._maybe_log_skip_summary()
             return
+
         if self.evaluation_stride > 1 and (self.window_counter % self.evaluation_stride) != 0:
+            self.skip_stride += 1
+            self._maybe_log_skip_summary()
             return
 
         self._evaluate_window()
+
+    def _find_nearest(self, buffer, target_stamp_ns, max_dt_ns):
+        best = None
+        best_dt = None
+
+        for item in buffer:
+            dt = abs(item["stamp_ns"] - target_stamp_ns)
+            if dt <= max_dt_ns:
+                if best is None or dt < best_dt:
+                    best = item
+                    best_dt = dt
+
+        return best
 
     ###############################################
     # REFINEMENT
@@ -338,6 +533,8 @@ class Online2DNode(Node):
 
         if motion["translation_total"] < self.min_translation_for_window and \
            motion["rotation_total_deg"] < self.min_rotation_deg_for_window:
+            self.skip_low_motion += 1
+            self._maybe_log_skip_summary()
             return
 
         current_eval = utils.evaluate_multiframe_edge_cost(
@@ -371,6 +568,24 @@ class Online2DNode(Node):
             min_improvement=self.min_improvement,
         )
 
+        # Periodic diagnostic logging for window evaluation.
+        if self.num_windows_evaluated == 1 or (self.num_windows_evaluated % 10) == 0:
+            self.get_logger().info(
+                "online2d window evaluation:\n"
+                f"  num_windows_evaluated={self.num_windows_evaluated}\n"
+                f"  current_cost={current_cost:.6f}\n"
+                f"  candidate_cost={candidate_cost:.6f}\n"
+                f"  improvement={current_cost - candidate_cost:.6f}\n"
+                f"  translation_step={translation_step:.6f} m\n"
+                f"  rotation_step={rotation_step_deg:.6f} deg\n"
+                f"  motion_translation_total={motion['translation_total']:.6f} m\n"
+                f"  motion_rotation_total_deg={motion['rotation_total_deg']:.6f} deg\n"
+                f"  accepted={accepted}\n"
+                f"  best_cost={self.best_cost:.6f}\n"
+                f"  num_updates_applied={self.num_updates_applied}\n"
+                f"  num_windows_rejected={self.num_windows_rejected}"
+            )
+
         if accepted:
             self.current_t = candidate_t.copy()
             self.current_q = candidate_q.copy()
@@ -385,8 +600,35 @@ class Online2DNode(Node):
                     f"online2d accepted update. best_cost={self.best_cost:.4f}, "
                     f"translation_step={translation_step:.4f} m, rotation_step={rotation_step_deg:.3f} deg"
                 )
+            else:
+                self.get_logger().info(
+                    "online2d accepted candidate for current state, "
+                    "but it did not beat historical best_cost, so no publish occurred.\n"
+                    f"  candidate_cost={candidate_cost:.6f}\n"
+                    f"  best_cost={self.best_cost:.6f}"
+                )
         else:
             self.num_windows_rejected += 1
+
+            rejection_reasons = []
+            if candidate_cost >= current_cost - self.min_improvement:
+                rejection_reasons.append("insufficient_improvement")
+            if translation_step > self.max_translation_step:
+                rejection_reasons.append("translation_step_too_large")
+            if rotation_step_deg > self.max_rotation_step_deg:
+                rejection_reasons.append("rotation_step_too_large")
+            if not rejection_reasons:
+                rejection_reasons.append("rejected_by_refinement_should_accept_update")
+
+            if self.num_windows_rejected == 1 or (self.num_windows_rejected % 10) == 0:
+                self.get_logger().info(
+                    "online2d rejected candidate update.\n"
+                    f"  reasons={','.join(rejection_reasons)}\n"
+                    f"  current_cost={current_cost:.6f}\n"
+                    f"  candidate_cost={candidate_cost:.6f}\n"
+                    f"  translation_step={translation_step:.6f} m\n"
+                    f"  rotation_step={rotation_step_deg:.6f} deg"
+                )
 
         if utils.deterioration_detected(
             best_cost=self.best_cost,

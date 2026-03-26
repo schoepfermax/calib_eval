@@ -100,24 +100,30 @@ def generate_launch_description():
                 "reference_extrinsics_topic": "/eval/ref_extrinsics",
                 "output_extrinsics_topic": "/eval/offline2d_extrinsics",
 
-                # Lighter sanity/integration settings for the laptop-side 2D path.
-                "max_frames": 40,
-                "top_k": 20,
+                # Stronger dynamic-2d diagnostic settings after fixing
+                # reference-centered rotation bounds in offline2d.
+                "max_frames": 20,
+                "top_k": 10,
 
-                # Keep the search explicit and thesis-defensible, but cheaper.
-                "stage_a_translation_steps_x_m": [-0.05, 0.0, 0.05],
-                "stage_a_translation_steps_y_m": [-0.05, 0.0, 0.05],
-                "stage_a_translation_steps_z_m": [0.0],
-                "stage_a_rotation_steps_roll_deg": [0.0],
-                "stage_a_rotation_steps_pitch_deg": [0.0],
-                "stage_a_rotation_steps_yaw_deg": [-2.0, 0.0, 2.0],
+                # Tighter search around the now-correct reference neighborhood.
+                "rotation_bound_roll_deg": 6.0,
+                "rotation_bound_pitch_deg": 6.0,
+                "rotation_bound_yaw_deg": 8.0,
 
-                "stage_b_translation_steps_x_m": [-0.01, 0.0, 0.01],
-                "stage_b_translation_steps_y_m": [-0.01, 0.0, 0.01],
-                "stage_b_translation_steps_z_m": [0.0],
-                "stage_b_rotation_steps_roll_deg": [0.0],
-                "stage_b_rotation_steps_pitch_deg": [0.0],
-                "stage_b_rotation_steps_yaw_deg": [-0.5, 0.0, 0.5],
+                # Slightly denser explicit search for the dynamic rig.
+                "stage_a_translation_steps_x_m": [-0.06, -0.03, 0.0, 0.03, 0.06],
+                "stage_a_translation_steps_y_m": [-0.06, -0.03, 0.0, 0.03, 0.06],
+                "stage_a_translation_steps_z_m": [-0.03, 0.0, 0.03],
+                "stage_a_rotation_steps_roll_deg": [-1.0, 0.0, 1.0],
+                "stage_a_rotation_steps_pitch_deg": [-1.0, 0.0, 1.0],
+                "stage_a_rotation_steps_yaw_deg": [-2.0, -1.0, 0.0, 1.0, 2.0],
+
+                "stage_b_translation_steps_x_m": [-0.0075, -0.005, -0.0025, 0.0, 0.0025, 0.005, 0.0075],
+                "stage_b_translation_steps_y_m": [-0.0075, -0.005, -0.0025, 0.0, 0.0025, 0.005, 0.0075],
+                "stage_b_translation_steps_z_m": [-0.005, -0.0025, 0.0, 0.0025, 0.005],
+                "stage_b_rotation_steps_roll_deg": [-0.25, -0.125, 0.0, 0.125, 0.25],
+                "stage_b_rotation_steps_pitch_deg": [-0.25, -0.125, 0.0, 0.125, 0.25],
+                "stage_b_rotation_steps_yaw_deg": [-0.5, -0.25, -0.125, 0.0, 0.125, 0.25, 0.5],
             }],
         ),
 
@@ -134,12 +140,25 @@ def generate_launch_description():
                 "odom_topic": "/eval/odom",
                 "input_extrinsics_topic": "/eval/offline2d_extrinsics",
                 "output_extrinsics_topic": "/eval/estimated_extrinsics",
-                "window_size": 20,
-                "min_translation_for_update_m": 0.02,
-                "min_yaw_for_update_deg": 2.0,
-                "max_translation_step_m": 0.05,
-                "max_rotation_step_deg": 2.0,
-                "deterioration_patience": 5,
+
+                # Aggressive online smoke settings to force actual evaluation/update behavior.
+                "window_size": 10,
+                "min_window_size": 3,
+                "evaluation_stride": 1,
+
+                "min_translation_for_update_m": 0.0,
+                "min_yaw_for_update_deg": 0.0,
+
+                "max_translation_step_m": 0.10,
+                "max_rotation_step_deg": 5.0,
+                "min_improvement": 0.0,
+                "deterioration_patience": 20,
+
+                "edge_ratio_gate": 0.0,
+                "mean_grad_gate": 0.0,
+
+                "translation_step_candidates": [0.0, 0.005],
+                "rotation_step_candidates_deg": [0.0, 0.25],
             }],
         ),
 

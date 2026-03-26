@@ -193,31 +193,21 @@ def scan_dict_to_points_lidar_frame(scan_dict, vertical_offset=0.0):
     camera-frame depth on +Z. For this rig, the raw 2D scan must therefore be
     embedded in a camera-compatible horizontal plane before projection.
 
-    The earlier implementation placed the scan in the LiDAR XY plane:
-        x = r * cos(a)
-        y = r * sin(a)
-        z = 0
+    The dynamic rig also has a fixed physical LiDAR yaw mounting offset of
+    -45 deg. We keep dynamic_reference.yaml unchanged and compensate that
+    convention here in the dynamic-only scan embedding path.
 
-    That breaks projection for this dynamic rig because the scan then has no
-    meaningful forward depth when combined with the near-identity reference
-    transform. The result was the exact failure observed in the first dynamic
-    end-to-end run:
-      - reprojection visibility collapsed to 0
-      - reprojection pixel error became inf
-      - edge-hit ratio collapsed to 0
+    The scan is therefore embedded after applying a fixed angle correction:
+      a_corr = a - 45 deg
 
-    The dynamic rig uses a camera-like convention instead:
-      - +Z = forward / depth
-      - +X = right in the image
-      - Y stays approximately constant for the horizontal scan plane
-
-    Therefore we embed the raw 2D scan as:
-      x = -r * sin(a)
+    Then:
+      x = -r * sin(a_corr)
       y = vertical_offset
-      z =  r * cos(a)
+      z =  r * cos(a_corr)
 
     This keeps the dynamic scan geometry consistent with the rest of the 2D
-    camera-projection path.
+    camera-projection path without changing the shared evaluator nodes or the
+    reference YAML used by other experiments.
     """
     if scan_dict is None:
         return np.zeros((0, 3), dtype=np.float32)
@@ -240,9 +230,13 @@ def scan_dict_to_points_lidar_frame(scan_dict, vertical_offset=0.0):
     r = ranges[valid]
     a = angles[valid]
 
-    x = -r * np.sin(a)
+    # Dynamic rig fixed LiDAR mounting yaw convention correction.
+    # Physical rig used for data collection had -45 deg yaw.
+    a_corr = a + np.deg2rad(-45.0)
+
+    x = -r * np.sin(a_corr)
     y = np.full_like(r, float(vertical_offset), dtype=np.float32)
-    z = r * np.cos(a)
+    z = r * np.cos(a_corr)
     return np.stack([x, y, z], axis=1).astype(np.float32)
 
 
