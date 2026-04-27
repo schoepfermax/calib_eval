@@ -17,3 +17,4 @@ evaluation_results/
 *.tar
 *.tar.gz
 *.zip
+*.bak*
