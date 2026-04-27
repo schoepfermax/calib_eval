@@ -18,9 +18,9 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='rav4243s',
-    maintainer_email='rav4243s@hs-coburg.de',
-    description='Calibration evaluation package for camera-LiDAR sensor setups.',
+    maintainer='srijan',
+    maintainer_email='www.srijangupta@gmail.com',
+    description='Evaluation/Calibration package for camera-LiDAR sensor setups.',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={

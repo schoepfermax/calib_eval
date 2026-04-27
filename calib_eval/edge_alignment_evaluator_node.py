@@ -126,13 +126,7 @@ class EdgeAlignmentEvaluatorNode(Node):
           - raw_scan      -> LaserScan
           - pseudo_points -> PointCloud2
 
-        To avoid requiring an immediate synchronized launch-file change, we also
-        infer from the resolved topic name when possible:
-          - .../scan   -> LaserScan
-          - .../points -> PointCloud2
-
-        If dynamic_representation is unset and the topic is ambiguous, we keep
-        the previous behavior for backward compatibility:
+        If dynamic_representation is unset and the topic is ambiguous:
           - dynamic rig defaults to LaserScan
           - static rig defaults to PointCloud2
         """
@@ -220,12 +214,6 @@ class EdgeAlignmentEvaluatorNode(Node):
         self.try_compute()
 
     def scan_callback(self, msg):
-        """
-        Dynamic-rig LaserScan conversion must match the same helper used by the
-        offline/online 2D calibration path. Using a different scan embedding in
-        the evaluator makes the metric path geometrically inconsistent with the
-        optimization path.
-        """
         scan_dict = {
             "ranges": list(msg.ranges),
             "intensities": list(msg.intensities),
@@ -249,7 +237,7 @@ class EdgeAlignmentEvaluatorNode(Node):
         """
         Convert ROS CameraInfo into the intrinsics dict format expected by geometry_utils.
 
-        geometry_utils in this repo expects:
+        geometry_utils expects:
           {'fx':..., 'fy':..., 'cx':..., 'cy':...}
         """
         K = list(cam.k)
@@ -292,7 +280,7 @@ class EdgeAlignmentEvaluatorNode(Node):
 
         # NOTE:
         #   Extrinsics topics are camera->lidar (frame_id=camera, child_frame_id=lidar).
-        #   Projection expects lidar->camera. Invert here (adapter responsibility).
+        #   Projection expects lidar->camera. Invert here.
         t_lidar_cam, q_lidar_cam = invert_extrinsics_cam_to_lidar_to_lidar_to_cam(t, q)
 
         projected_uv, _ = project_lidar_to_image(

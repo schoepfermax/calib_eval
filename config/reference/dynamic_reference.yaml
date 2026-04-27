@@ -19,6 +19,6 @@ source:
   notes: "reference derived from car_description URDF/xacro for car 6; LiDAR yaw offset = -45 deg; baseline/reference only, not GT"
 
 repeatability:
-  # Placeholder repeatability block retained for Option C reporting.
+  # Placeholder repeatability block retained for reporting.
   translation_std_m: [0.0010, 0.0012, 0.0015]   # per-axis std (m)
   rotation_std_deg: 0.35                        # scalar std (deg)

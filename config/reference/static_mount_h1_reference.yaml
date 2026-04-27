@@ -19,6 +19,6 @@ source:
   notes: "baseline estimate (not GT), computed from N repeated calibrations"
 
 repeatability:
-  # Optional but very useful for Option C reporting
+  # Optional but very useful for reporting
   translation_std_m: [0.0010, 0.0012, 0.0015]   # per-axis std (m)
   rotation_std_deg: 0.35                        # scalar std (deg)

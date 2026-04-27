@@ -1,5 +1,5 @@
 ###############################################
-# BEV TRAINING ENTRY FOR THESIS PROJECT
+# BEV TRAINING
 ###############################################
 
 import os

@@ -14,7 +14,7 @@ import cv2
 
 def intrinsics_dict_from_camera_info_or_loader_dict(intrinsics):
     """
-    Normalize intrinsics into the common dict used across this repo:
+    Normalize intrinsics into the common dict used across the pipeline:
         {
             'width': int,
             'height': int,
@@ -193,7 +193,7 @@ def scan_dict_to_points_lidar_frame(scan_dict, vertical_offset=0.0):
     camera-frame depth on +Z. For this rig, the raw 2D scan must therefore be
     embedded in a camera-compatible horizontal plane before projection.
 
-    The dynamic rig also has a fixed physical LiDAR yaw mounting offset of
+    The dynamic rig i.e. Model Car ID = 6 also has a fixed physical LiDAR yaw mounting offset of
     -45 deg. We keep dynamic_reference.yaml unchanged and compensate that
     convention here in the dynamic-only scan embedding path.
 
@@ -231,7 +231,7 @@ def scan_dict_to_points_lidar_frame(scan_dict, vertical_offset=0.0):
     a = angles[valid]
 
     # Dynamic rig fixed LiDAR mounting yaw convention correction.
-    # Physical rig used for data collection had -45 deg yaw.
+    # Car 6 had -45 deg yaw.
     a_corr = a + np.deg2rad(-45.0)
 
     x = -r * np.sin(a_corr)
@@ -698,11 +698,9 @@ def coarse_to_fine_search(
     evaluation_kwargs,
 ):
     """
-    Very simple explicit two-stage search:
+    Explicit two-stage search:
       - Stage A: constrained coarse candidate search
       - Stage B: full local refinement around the best Stage A candidate
-
-    This avoids hidden optimizer behavior and is easier to defend in the thesis.
     """
     base = np.asarray(init_param_vec, dtype=np.float32).reshape(6,)
 
@@ -787,7 +785,7 @@ def pose_dict_to_translation_quaternion(odom_pose_dict):
 
 def odom_window_motion_metrics(odom_sequence):
     """
-    Compute simple motion observability metrics from an odom window.
+    Compute motion observability metrics from an odom window.
     """
     if odom_sequence is None or len(odom_sequence) < 2:
         return {
@@ -819,7 +817,7 @@ def refinement_should_accept_update(
     min_improvement=1e-4,
 ):
     """
-    Explicit acceptance logic for online-style refinement.
+    Acceptance logic for online-style refinement.
     """
     if translation_step > float(max_translation_step):
         return False

@@ -1,24 +1,12 @@
 #!/usr/bin/env python3
 ###############################################
-# Offline2D Calibration Node
+# Offline2D Calibration
 #
 # Classical multi-frame edge-alignment calibration
 # for 2D laser scanner + camera rigs.
 #
-# Pipeline position:
-#   data_preprocessor_node
-#       ↓
-#   offline2d
-#       ↓
-#   online2d
-#       ↓
-#   evaluators
-#
 # Design notes:
 #   - This node computes the initial 2D scan-camera extrinsics.
-#   - It uses the dynamic pipeline helpers from dynamic_utils.py.
-#   - The implementation is explicit and bounded rather than using hidden
-#     optimizer behavior.
 #   - Reference extrinsics are used only as the initialization / baseline.
 #   - Synchronization is done with a small explicit "pending latest sample"
 #     strategy so that image-first publish order does not starve collection.
@@ -386,13 +374,20 @@ class Offline2DNode(Node):
                 "weight": 1.0,
             })
 
+        # Publish the baseline/reference extrinsics immediately as a provisional
+        # seed so online2d can leave pre-init while the heavier offline search runs.
+        self.get_logger().info(
+            "offline2d publishing provisional reference seed before heavy offline search."
+        )
+        self.publish_extrinsics(self.reference_t, self.reference_q)
+
         init_param = utils.make_parameter_vector_from_translation_quaternion(
             self.reference_t,
             self.reference_q,
         )
 
         ref_rpy = utils.quaternion_xyzw_to_rpy(self.reference_q)
-        rotation_bounds_rpy = [
+        rotation_bounds_rpy = [ 
             (
                 float(ref_rpy[0] - self.rotation_bound_halfwidths_rpy[0]),
                 float(ref_rpy[0] + self.rotation_bound_halfwidths_rpy[0]),
@@ -427,7 +422,30 @@ class Offline2DNode(Node):
         self.get_logger().info(
             f"offline2d calibration completed. selected_frames={len(bundle_list)}, best_cost={best_cost:.6f}"
         )
-        self.publish_extrinsics(best_t, best_q)
+        self.get_logger().info("offline2d scheduling repeated initial extrinsics publish.")
+        self.schedule_extrinsics_publish(best_t, best_q)
+
+    def schedule_extrinsics_publish(self, translation_xyz, quaternion_xyzw, repeats=8):
+        self.pending_publish_t = np.asarray(translation_xyz, dtype=np.float32).copy()
+        self.pending_publish_q = np.asarray(quaternion_xyzw, dtype=np.float32).copy()
+        self.pending_publish_remaining = int(repeats)
+
+        if not hasattr(self, "pending_publish_timer"):
+            self.pending_publish_timer = self.create_timer(0.2, self._pending_publish_timer_cb)
+
+    def _pending_publish_timer_cb(self):
+        if not hasattr(self, "pending_publish_remaining"):
+            return
+
+        if self.pending_publish_remaining <= 0:
+            return
+
+        self.publish_extrinsics(self.pending_publish_t, self.pending_publish_q)
+        self.pending_publish_remaining -= 1
+
+        self.get_logger().info(
+            f"offline2d repeated publish tick sent. remaining={self.pending_publish_remaining}"
+        )
 
     ###############################################
     # OUTPUT

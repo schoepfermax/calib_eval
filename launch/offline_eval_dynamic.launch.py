@@ -1,7 +1,5 @@
 """
-Offline evaluation launch (DYNAMIC rig).
-Offline pipeline:
-  DatasetPlayer -> ReferenceExtrinsicsPublisher -> Model Node -> Evaluators -> EvaluationPipeline
+Offline launch (DYNAMIC 2D rig).
 """
 
 from launch import LaunchDescription
@@ -16,13 +14,23 @@ evaluation_yaml = os.path.join(pkg_share, "config", "evaluation.yaml")
 
 
 def generate_launch_description():
-    # Environment-specific dataset root (laptop vs workstation vs HPC)
+    # Environment-specific dataset root (laptop vs workstation)
     default_dataset_root = os.environ.get("CALIB_EVAL_DATASET_ROOT", "")
 
     dataset_root_cfg = LaunchConfiguration("dataset_root")
     split_cfg = LaunchConfiguration("split")
     rig_config_id_cfg = LaunchConfiguration("rig_config_id")
     use_dynamic_rig_cfg = LaunchConfiguration("use_dynamic_rig")
+
+    # Online2D tuning knobs exposed as launch arguments
+    online_window_size_cfg = LaunchConfiguration("online_window_size")
+    online_min_window_size_cfg = LaunchConfiguration("online_min_window_size")
+    online_evaluation_stride_cfg = LaunchConfiguration("online_evaluation_stride")
+    online_min_improvement_cfg = LaunchConfiguration("online_min_improvement")
+    online_deterioration_patience_cfg = LaunchConfiguration("online_deterioration_patience")
+    online_deterioration_tolerance_cfg = LaunchConfiguration("online_deterioration_tolerance")
+    online_rotation_step_candidates_deg_cfg = LaunchConfiguration("online_rotation_step_candidates_deg")
+    online_translation_step_candidates_cfg = LaunchConfiguration("online_translation_step_candidates")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -44,6 +52,47 @@ def generate_launch_description():
             "use_dynamic_rig",
             default_value="true",
             description="Dynamic rig mode (LaserScan-based dataset conventions)."
+        ),
+
+        DeclareLaunchArgument(
+            "online_window_size",
+            default_value="10",
+            description="Online2D rolling window size."
+        ),
+        DeclareLaunchArgument(
+            "online_min_window_size",
+            default_value="3",
+            description="Minimum valid Online2D window size."
+        ),
+        DeclareLaunchArgument(
+            "online_evaluation_stride",
+            default_value="1",
+            description="Online2D evaluation stride."
+        ),
+        DeclareLaunchArgument(
+            "online_min_improvement",
+            default_value="0.0",
+            description="Minimum required cost improvement for accepting an Online2D update."
+        ),
+        DeclareLaunchArgument(
+            "online_deterioration_patience",
+            default_value="20",
+            description="How many worsening Online2D windows to tolerate before freezing."
+        ),
+        DeclareLaunchArgument(
+            "online_deterioration_tolerance",
+            default_value="0.0001",
+            description="Tolerance used by Online2D deterioration detection."
+        ),
+        DeclareLaunchArgument(
+            "online_rotation_step_candidates_deg",
+            default_value="[0.0, 0.25]",
+            description="Yaw-step magnitudes in degrees for Online2D local search, e.g. [0.0, 0.10] or [0.0, 0.05, 0.10]."
+        ),
+        DeclareLaunchArgument(
+            "online_translation_step_candidates",
+            default_value="[0.0, 0.005]",
+            description="Translation-step candidates for Online2D."
         ),
 
         # 1) Dataset playback / preprocessing
@@ -141,24 +190,25 @@ def generate_launch_description():
                 "input_extrinsics_topic": "/eval/offline2d_extrinsics",
                 "output_extrinsics_topic": "/eval/estimated_extrinsics",
 
-                # Aggressive online smoke settings to force actual evaluation/update behavior.
-                "window_size": 10,
-                "min_window_size": 3,
-                "evaluation_stride": 1,
+                # Online2D tuning parameters exposed through launch
+                "window_size": online_window_size_cfg,
+                "min_window_size": online_min_window_size_cfg,
+                "evaluation_stride": online_evaluation_stride_cfg,
 
                 "min_translation_for_update_m": 0.0,
                 "min_yaw_for_update_deg": 0.0,
 
                 "max_translation_step_m": 0.10,
                 "max_rotation_step_deg": 5.0,
-                "min_improvement": 0.0,
-                "deterioration_patience": 20,
+                "min_improvement": online_min_improvement_cfg,
+                "deterioration_patience": online_deterioration_patience_cfg,
+                "deterioration_tolerance": online_deterioration_tolerance_cfg,
 
                 "edge_ratio_gate": 0.0,
                 "mean_grad_gate": 0.0,
 
-                "translation_step_candidates": [0.0, 0.005],
-                "rotation_step_candidates_deg": [0.0, 0.25],
+                "translation_step_candidates": online_translation_step_candidates_cfg,
+                "rotation_step_candidates_deg": online_rotation_step_candidates_deg_cfg,
             }],
         ),
 

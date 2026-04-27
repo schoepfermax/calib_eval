@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 ###############################################
-# Online2D Calibration Refinement Node
+# Online2D Calibration Refinement
 #
-# Mandatory second stage for the 2D calibration path.
-#
-# This node consumes offline-played topics from the dataset-backed
+# Consumes offline-played topics from the dataset-backed
 # data_preprocessor_node and refines the initial offline extrinsics over
 # rolling windows of image + scan + odometry.
 #
@@ -13,16 +11,6 @@
 #   - sequential / online-style in its update logic
 #   - keeps the best-so-far transform
 #   - freezes refinement once meaningful deterioration is detected
-#
-# Diagnostic notes:
-#   - This version adds explicit logging so we can see whether online2d
-#     is:
-#         * receiving usable samples
-#         * entering window evaluation
-#         * finding candidate improvements
-#         * rejecting updates due to gating / limits
-#         * freezing due to deterioration
-#   - The actual refinement behavior is intentionally unchanged here.
 ###############################################
 
 import math
@@ -371,8 +359,7 @@ class Online2DNode(Node):
 
     def _extrinsics_cb(self, msg: TransformStamped):
         # Capture the first incoming extrinsics as the initialization from offline2d,
-        # then ignore later messages to avoid self-feedback if input and output topics
-        # are intentionally the same.
+        # then ignore later messages to avoid self-feedback.
         if self.initial_extrinsics_received:
             return
 
@@ -398,7 +385,9 @@ class Online2DNode(Node):
             )
 
             if len(self.sample_window) >= self.min_window_size:
-                self._evaluate_window()
+                self.get_logger().info(
+                    "online2d deferred first window evaluation to post-init image callbacks."
+                )
 
         self.get_logger().info(
             "online2d received initial extrinsics, published them, and is ready to refine."
@@ -419,8 +408,6 @@ class Online2DNode(Node):
         # PRE-INIT PHASE:
         # The offline dataset player already publishes image + scan + odom
         # from the SAME dataset sample using the SAME playback stamp.
-        # So for dynamic 2d offline playback, we should consume the latest
-        # current tuple directly instead of re-solving synchronization here.
         # ------------------------------------------------------------
         if not self.initial_extrinsics_received:
             if self.latest_scan is None:
@@ -451,7 +438,6 @@ class Online2DNode(Node):
 
         # ------------------------------------------------------------
         # POST-INIT PHASE:
-        # Same playback contract applies here as well.
         # Consume the latest scan + odom belonging to the current played sample.
         # ------------------------------------------------------------
         if self.latest_scan is None:
@@ -536,6 +522,13 @@ class Online2DNode(Node):
             self.skip_low_motion += 1
             self._maybe_log_skip_summary()
             return
+        
+        self.get_logger().info(
+            "online2d entering local refinement search.\n"
+            f"  window_len={len(bundle_list)}\n"
+            f"  motion_translation_total={motion['translation_total']:.6f} m\n"
+            f"  motion_rotation_total_deg={motion['rotation_total_deg']:.6f} deg"
+        )
 
         current_eval = utils.evaluate_multiframe_edge_cost(
             sample_bundle_list=bundle_list,
@@ -591,19 +584,24 @@ class Online2DNode(Node):
             self.current_q = candidate_q.copy()
             self.num_updates_applied += 1
 
+            # Publish every accepted current-state update so evaluators can
+            # observe online refinement, even when the candidate does not
+            # beat the historical best_cost.
+            self._publish_transform(self.current_t, self.current_q)
+
             if candidate_cost < self.best_cost:
                 self.best_cost = float(candidate_cost)
                 self.best_t = candidate_t.copy()
                 self.best_q = candidate_q.copy()
-                self._publish_transform(self.best_t, self.best_q)
                 self.get_logger().info(
-                    f"online2d accepted update. best_cost={self.best_cost:.4f}, "
+                    f"online2d accepted update and improved historical best. "
+                    f"best_cost={self.best_cost:.4f}, "
                     f"translation_step={translation_step:.4f} m, rotation_step={rotation_step_deg:.3f} deg"
                 )
             else:
                 self.get_logger().info(
-                    "online2d accepted candidate for current state, "
-                    "but it did not beat historical best_cost, so no publish occurred.\n"
+                    "online2d accepted update for current state, "
+                    "published it, but it did not beat historical best_cost.\n"
                     f"  candidate_cost={candidate_cost:.6f}\n"
                     f"  best_cost={self.best_cost:.6f}"
                 )
@@ -642,28 +640,53 @@ class Online2DNode(Node):
                 "online2d detected sustained deterioration. Refinement frozen at best-so-far transform."
             )
 
+    def _build_local_yaw_steps_rad(self):
+        """
+        Build the effective local yaw search list from the launch-provided
+        parameter self.rotation_step_candidates_deg.
+
+        Expected usage:
+          - [0.0, 0.25]         -> [-0.25, 0.0, 0.25]
+          - [0.0, 0.10]         -> [-0.10, 0.0, 0.10]
+          - [0.0, 0.05, 0.10]   -> [-0.10, -0.05, 0.0, 0.05, 0.10]
+        """
+        yaw_steps_deg = []
+
+        for deg in self.rotation_step_candidates_deg:
+            v = abs(float(deg))
+            yaw_steps_deg.append(0.0)
+            yaw_steps_deg.append(v)
+            yaw_steps_deg.append(-v)
+
+        yaw_steps_deg = sorted(set(yaw_steps_deg))
+        yaw_steps_rad = [math.radians(v) for v in yaw_steps_deg]
+        return yaw_steps_rad
+
     def _search_local_update(self, bundle_list):
         base_param = utils.make_parameter_vector_from_translation_quaternion(
             self.current_t,
             self.current_q,
         )
 
-        trans_steps = []
-        for v in self.translation_step_candidates:
-            trans_steps.extend([-v, 0.0, v])
-        trans_steps = sorted(list(set(trans_steps)))
+        # Temporary diagnostic restriction:
+        # keep online refinement extremely small so we can verify that the
+        # post-init refinement path completes and produces visible updates.
+        #
+        # Translation: frozen
+        # Roll/Pitch:  frozen
+        # Yaw:         tiny local search only
+        yaw_steps_rad = self._build_local_yaw_steps_rad()
 
-        rot_steps = []
-        for deg in self.rotation_step_candidates_deg:
-            rad = math.radians(deg)
-            rot_steps.extend([-rad, 0.0, rad])
-        rot_steps = sorted(list(set(rot_steps)))
+        candidates = []
+        for yaw_step in yaw_steps_rad:
+            cand = np.asarray(base_param, dtype=np.float32).copy()
+            cand[5] = float(base_param[5] + yaw_step)
+            candidates.append(cand)
 
-        candidates = utils.build_coarse_candidate_grid(
-            base_param_vec=base_param,
-            translation_steps_xyz=trans_steps,
-            rotation_steps_rpy=rot_steps,
-            stage_mask=None,
+        self.get_logger().info(
+            "online2d local candidate search started.\n"
+            f"  num_candidates={len(candidates)}\n"
+            f"  yaw_steps_deg={[round(math.degrees(v), 6) for v in yaw_steps_rad]}"
         )
 
         best_t = self.current_t.copy()
@@ -676,7 +699,7 @@ class Online2DNode(Node):
         )
         best_cost = float(best_eval["mean_total_cost"])
 
-        for cand in candidates:
+        for idx, cand in enumerate(candidates):
             cand = np.asarray(cand, dtype=np.float32).reshape(6,)
             cand_t, cand_q = utils.make_translation_quaternion_from_parameter_vector(cand)
             ev = utils.evaluate_multiframe_edge_cost(
@@ -686,10 +709,24 @@ class Online2DNode(Node):
                 **self.eval_kwargs,
             )
             cost = float(ev["mean_total_cost"])
+
+            if idx == 0 or idx == len(candidates) - 1:
+                self.get_logger().info(
+                    "online2d candidate evaluated.\n"
+                    f"  idx={idx}\n"
+                    f"  yaw_deg={math.degrees(float(cand[5] - base_param[5])):.6f}\n"
+                    f"  cost={cost:.6f}"
+                )
+
             if cost < best_cost:
                 best_cost = cost
                 best_t = cand_t.copy()
                 best_q = cand_q.copy()
+
+        self.get_logger().info(
+            "online2d local candidate search finished.\n"
+            f"  best_cost={best_cost:.6f}"
+        )
 
         return best_t, best_q, best_cost
 

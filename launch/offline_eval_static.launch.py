@@ -1,12 +1,5 @@
 """
-Offline evaluation launch (STATIC rig).
-
-Starts from "dataset loader onwards":
-  DatasetPlayer -> ReferenceExtrinsicsPublisher -> Model Node -> Evaluators -> EvaluationPipeline
-
-This is intended for:
-  - laptop sanity checks
-  - HPC batch runs by changing dataset_root + model params
+Offline launch (STATIC 3D rig).
 """
 
 from launch import LaunchDescription
@@ -45,7 +38,7 @@ def generate_launch_description():
     dataset_publish_rate_hz_cfg = LaunchConfiguration("dataset_publish_rate_hz")
     reference_publish_rate_hz_cfg = LaunchConfiguration("reference_publish_rate_hz")
 
-    # - checkpoint_path passed at launch-time so model node does not crash before ros2 param set.
+    # Checkpoint_path passed at launch-time so model node does not crash before ros2 param set.
     checkpoint_path_cfg = LaunchConfiguration("checkpoint_path")
     device_cfg = LaunchConfiguration("device")
 
@@ -53,18 +46,18 @@ def generate_launch_description():
     lccnet_mode_cfg = LaunchConfiguration("lccnet_mode")
     lccnet_iterative_steps_cfg = LaunchConfiguration("lccnet_iterative_steps")
 
-    # - evaluation_config_path passed at launch-time to all relevant nodes.
+    # Evaluation_config_path passed at launch-time to all relevant nodes.
     evaluation_config_path_cfg = LaunchConfiguration("evaluation_config_path")
 
     # Optional override (keep empty by default; node resolves using rig_config_id)
     reference_yaml_path_cfg = LaunchConfiguration("reference_yaml_path")
 
-    # Reference extrinsics (baseline from Abdul Haq tool)
+    # Reference extrinsics
     # NOTE:
     # ReferenceExtrinsicsPublisher resolves reference YAML from rig_config_id + package share by default.
 
     # Choose which wrapper to start:
-    #   supervised_model_node.py  (LCCNet/CalibNet later)
+    #   supervised_model_node.py  (LCCNet)
     #   calib_model_node.py       (BEVCalib)
 
     return LaunchDescription([

@@ -77,7 +77,6 @@ def _discover_run_folders(parent_dir: str) -> List[str]:
 def _list_sample_ids_from_images(run_dir: str) -> List[str]:
     """
     Lists sample IDs by scanning images/*.png.
-    We assume filename stems are the sample IDs (e.g. 000123).
     """
     image_dir = os.path.join(run_dir, "images")
     if not os.path.isdir(image_dir):
@@ -257,7 +256,7 @@ def generate_splits(
       - static-style runs
       - dynamic-rig runs
 
-    Splits are deterministic due to `seed`.
+    Splits are deterministic.
     """
     dataset_root = os.path.expanduser(dataset_root)
 

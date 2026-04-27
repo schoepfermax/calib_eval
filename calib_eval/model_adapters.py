@@ -53,10 +53,10 @@ class LCCNetAdapter:
 
         # ------------------------------------------------------------
         # Static-rig (or pointcloud-provided) path:
-        # Existing behavior preserved: project points directly to depth image.
+        # project points directly to depth image.
         # WARNING:
         #   This assumes points are already in the camera frame (x,y,z).
-        #   If points are in LiDAR frame, this must be replaced later with
+        #   If points are in LiDAR frame, this must be replaced with
         #   GT/estimated extrinsics transform before projection.
         # ------------------------------------------------------------
         points = sample['points']

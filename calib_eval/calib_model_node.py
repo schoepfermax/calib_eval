@@ -148,8 +148,6 @@ class CalibModelNode(Node):
             self.get_parameter("estimated_extrinsics_topic").value
         )
 
-        # Backward-compatible topic resolution:
-        # prefer points_topic, but accept lidar_topic from launch files.
         resolved_points_topic = points_topic.strip()
         if not resolved_points_topic:
             resolved_points_topic = lidar_topic.strip()
@@ -365,7 +363,6 @@ class CalibModelNode(Node):
 
     def _quat_from_R(self, R: np.ndarray) -> np.ndarray:
         # Robust rotation matrix -> quaternion (xyzw)
-        # Minimal implementation (no external deps).
         m = R
         tr = float(m[0, 0] + m[1, 1] + m[2, 2])
 

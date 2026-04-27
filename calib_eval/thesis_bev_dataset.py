@@ -1,5 +1,5 @@
 ###############################################
-# BEV TRAINING DATASET FOR THESIS PROJECT
+# BEV TRAINING DATASET
 ###############################################
 
 import os
@@ -99,7 +99,7 @@ class ThesisBEVDataset:
         item[3] -> intrinsics       (3x3)
 
     Internally this reuses UniversalCalibrationDataset so we do not duplicate
-    any dataset-structure parsing logic from the thesis pipeline.
+    any dataset-structure parsing logic from the pipeline.
     """
 
     def __init__(

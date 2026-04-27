@@ -11,7 +11,7 @@ edge:
   canny_high: 200
 
 # Reference / baseline configuration
-# NOTE: This is NOT ground truth. It is Abdul Haq tool baseline estimate.
+# NOTE: This is NOT ground truth.
 reference:
   enabled: true
   reference_yaml_path: ""
@@ -35,6 +35,6 @@ metrics:
     enabled: false
 
 output:
-  # For benchmarking / thesis experiments, we MUST write CSV to disk.
+  # For benchmarking experiments, write CSV to disk.
   save_to_file: true
   output_path: ~/evaluation_results/

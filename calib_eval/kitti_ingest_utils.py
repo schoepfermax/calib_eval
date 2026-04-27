@@ -26,7 +26,7 @@ def discover_kitti_odometry_sequences(kitti_root: str) -> List[str]:
     # Common KITTI odometry layout
     seq_root = os.path.join(kitti_root, "dataset", "sequences")
     if not os.path.isdir(seq_root):
-        # Fallback: some users point directly to "sequences"
+        # Fallback
         seq_root = os.path.join(kitti_root, "sequences")
 
     if not os.path.isdir(seq_root):

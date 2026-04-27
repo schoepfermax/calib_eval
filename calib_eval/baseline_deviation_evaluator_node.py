@@ -3,7 +3,7 @@
 ###############################################
 #
 # Compare a model's estimated extrinsics against a reference/baseline
-# extrinsics (e.g., Abdul Haq tool output) and track repeatability.
+# extrinsics and track repeatability.
 #
 # Subscribes:
 #   /eval/estimated_extrinsics  (TransformStamped)  <- from model wrapper

@@ -1,5 +1,5 @@
 ###############################################
-# Loads a baseline/reference extrinsics YAML (Abdul Haq's tool output)
+# Loads a baseline/reference extrinsics YAML
 # and publishes it as:
 #   /eval/ref_extrinsics  (TransformStamped)
 # This reference is NOT ground truth; it is a baseline estimate.
@@ -15,7 +15,6 @@ from rclpy.node import Node
 from geometry_msgs.msg import TransformStamped
 from ament_index_python.packages import get_package_share_directory
 
-# Package-installed assumption: use relative imports only.
 from .geometry_utils import quat_normalize_xyzw
 
 

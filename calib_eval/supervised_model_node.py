@@ -1,6 +1,4 @@
 ###############################################
-# Wraps a supervised calibration model and publishes estimated extrinsics.
-###############################################
 # Publishes estimated extrinsics to:
 #   /eval/estimated_extrinsics  (TransformStamped)
 #
@@ -19,9 +17,7 @@
 #   - By default we treat LCCNet output as a DELTA and compose it onto reference.
 #
 # Frame convention (IMPORTANT, deterministic):
-#   - /eval/ref_extrinsics is expected to be a TF from camera -> lidar
-#     (header.frame_id=camera, child_frame_id=lidar), consistent with
-#     ReferenceExtrinsicsPublisher logs: parent_frame=camera, child_frame=lidar.
+#   - /eval/ref_extrinsics is a TF from camera -> lidar.
 #   - Projection needs lidar -> camera, so we invert the reference transform for
 #     depth projection only.
 #   - Published /eval/estimated_extrinsics follows the same direction as the
@@ -48,9 +44,6 @@ from calib_eval.geometry_utils import (
     quaternion_to_rotation_matrix,
 )
 
-# NOTE:
-# For consistency across all integrated models, we load LCCNet via the registry
-# (calib_eval.models.registry), not by importing third_party directly in this node.
 from calib_eval.models.registry import create_model_from_registry
 
 
@@ -98,16 +91,6 @@ def invert_transform_xyzw(t, q):
 
 
 def _auto_find_lccnet_checkpoint(logger=None):
-    """
-    Find the highest available kitti_iter*.tar checkpoint in a workspace-safe way.
-
-    Search order:
-      1) If CALIB_EVAL_LCCNET_CKPT_DIR is set, search there.
-      2) Search relative to this file location:
-         <repo>/calib_eval/models/checkpoints/LCCNet/kitti_iter*.tar
-
-    Returns "" if nothing found (caller decides how to handle).
-    """
     ckpt_dir_env = os.environ.get("CALIB_EVAL_LCCNET_CKPT_DIR", "").strip()
     candidates = []
 
@@ -230,12 +213,9 @@ class SupervisedModelNode(Node):
         # - If empty, we auto-pick the highest available kitti_iter*.tar from the local repo
         #   (or from CALIB_EVAL_LCCNET_CKPT_DIR if set).
         # - If provided, it must exist.
-        #
-        # IMPORTANT:
-        # Do NOT hardcode workstation-only paths here (e.g., /mnt/storage1/...).
         self.declare_parameter('checkpoint_path', "")
 
-        # Max depth used in training config (commonly 80.0 for KITTI-style configs)
+        # Max depth used in training config
         self.declare_parameter('max_depth_m', 80.0)
 
         # If true, treat network output as delta and compose with reference extrinsics.
@@ -326,14 +306,13 @@ class SupervisedModelNode(Node):
         else:
             # IMPORTANT:
             # Do NOT preload all iterative stage models onto CUDA at startup.
-            # On the laptop GPU this can exhaust VRAM / cuDNN workspace and crash
-            # at the first convolution. Instead, keep only checkpoint paths and
+            # On the laptop GPU exhausts VRAM and crash at the first convolution.
+            # Instead, we keep only checkpoint paths and
             # load one stage at a time during the iterative loop.
             self.model = None
 
-            # Thesis workflow requirement:
-            # If the user explicitly passes checkpoint_path, iterative mode should
-            # reuse THAT checkpoint for every refinement step instead of silently
+            # If the checkpoint_path is explicitly passed, iterative mode
+            # uses THAT checkpoint for every refinement step instead of silently
             # defaulting to built-in KITTI staged checkpoints. This keeps the
             # experiment comparable to the single-pass run of the same model.
             if ckpt_path:

@@ -41,7 +41,7 @@ class DataPreprocessorNode(Node):
         ###############################################
         # MODE (offline by default)
         ###############################################
-        # Kept as a parameter so online can be re-enabled later if needed.
+        # Kept as a parameter so online can be re-enabled if needed.
         self.declare_parameter("mode", "offline")
 
         self.mode = str(self.get_parameter("mode").value).strip().lower()
@@ -63,7 +63,7 @@ class DataPreprocessorNode(Node):
         if self.mode == "online":
             # ------------------------------------------------------------
             # ONLINE MODE IS NOT USED IN CURRENT WORKFLOW.
-            # Keeping it intentionally disabled to avoid confusion. Backup in laptop.
+            # Keeping it intentionally disabled to avoid confusion. Backed up.
             # ------------------------------------------------------------
             self.get_logger().error(
                 "DataPreprocessorNode online mode is currently disabled/commented out.\n"
@@ -179,7 +179,6 @@ class DataPreprocessorNode(Node):
         """
         Build CameraInfo from the dataset loader intrinsics dict.
 
-        Thesis pipeline decision (deterministic, single-source schema):
           - We control extraction + loader, and therefore enforce ONE intrinsics schema.
           - For the static rig dataset loader, intrinsics are expected as:
                 {
@@ -219,7 +218,7 @@ class DataPreprocessorNode(Node):
         msg.width = width
         msg.height = height
 
-        # No distortion in current dataset extraction. Keep plumb_bob + empty coefficients.
+        # No distortion in current dataset extraction.
         msg.distortion_model = "plumb_bob"
         msg.d = []
 
@@ -253,7 +252,7 @@ class DataPreprocessorNode(Node):
         """
         Deterministic, lightweight point filtering:
           - optional box crop
-          - optional fixed-count sampling (deterministic seed based on index)
+          - optional fixed-count sampling
         """
         pts = np.asarray(pts, dtype=np.float32).reshape(-1, 3)
 
@@ -277,7 +276,7 @@ class DataPreprocessorNode(Node):
         if bool(self.get_parameter("enable_fixed_sampling").value) and pts.shape[0] > 0:
             n = int(self.get_parameter("fixed_num_points").value)
             if n > 0 and pts.shape[0] > n:
-                rng = np.random.RandomState(self.i)  # deterministic
+                rng = np.random.RandomState(self.i)
                 idx = rng.choice(pts.shape[0], size=n, replace=False)
                 pts = pts[idx]
 
@@ -390,8 +389,6 @@ class DataPreprocessorNode(Node):
         #   - raw_scan mode: publish stored LaserScan on /eval/clean/scan
         #   - pseudo_points mode: publish stored pseudo point cloud on /eval/clean/points
         #
-        # IMPORTANT:
-        #   We no longer fabricate pseudo clouds inside this node when raw scan exists.
         #   The dataset extractor already stores both raw scan and pseudo-3D for the dynamic rig.
 
         if self.use_dynamic_rig:

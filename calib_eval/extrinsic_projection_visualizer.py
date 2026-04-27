@@ -4,7 +4,7 @@
 # VISUALIZER
 ###############################################
 # Primary purpose:
-#   - thesis-grade qualitative visualization for archived calibration runs
+#   - qualitative visualization for archived calibration runs
 #   - side-by-side image-plane projection comparison:
 #       * reference extrinsics
 #       * estimated extrinsics
@@ -18,23 +18,13 @@
 #      - prefer a saved estimated extrinsics YAML from the archive when present
 #      - otherwise fall back to deterministic single-frame inference
 #
-# IMPORTANT:
-#   - newer archives may contain a saved estimated extrinsics YAML
-#   - older archives may not
-#   - when no saved YAML is present, archive_reconstruct mode falls back to
-#     single-frame inference for the selected sample; it does NOT rerun the
-#     full experiment
-#
 # Published topics:
 #   /viz/reference_overlay
 #   /viz/estimated_overlay
 #
 # Notes:
-#   - This file intentionally reuses existing project math/helpers rather than
-#     re-implementing calibration geometry from scratch.
 #   - Projection-based interpretation for dynamic pseudo-PCD remains limited;
-#     this visualizer is still useful for qualitative comparison and thesis
-#     figures.
+#     this visualizer is still useful for qualitative comparison.
 ###############################################
 
 import os
@@ -94,13 +84,6 @@ def quat_mul_xyzw(q1, q2):
 
 
 class ExtrinsicProjectionVisualizer(Node):
-    """
-    Archive-first visualizer with optional live mode.
-
-    Naming note:
-      We keep the file path for minimal change, but the node itself is called
-      simply "visualizer" to match project preference.
-    """
 
     def __init__(self):
         super().__init__("visualizer")
@@ -302,8 +285,6 @@ class ExtrinsicProjectionVisualizer(Node):
             )
         else:
             # Legacy fallback for older archives with no saved estimated YAML:
-            # keep the checkpoint-driven single-frame reconstruction path so
-            # historical runs remain visualizable.
             ckpt_path = str(self.archive_meta.get("checkpoint", "")).strip()
             if not ckpt_path or not os.path.isfile(ckpt_path):
                 raise RuntimeError(f"Checkpoint missing or invalid in run_info.txt: {ckpt_path}")
@@ -364,7 +345,6 @@ class ExtrinsicProjectionVisualizer(Node):
         return out
 
     def _resolve_reference_yaml_from_meta(self, meta: Dict) -> str:
-        # meta may store only "static_mount_h2_reference.yaml", not absolute path
         ref_raw = str(meta.get("reference_yaml", "")).strip()
         if not ref_raw:
             raise RuntimeError("reference_yaml not present in run_info.txt")
@@ -387,11 +367,6 @@ class ExtrinsicProjectionVisualizer(Node):
           <archive_dir>/estimated_extrinsics.yaml
 
         This is the preferred and intended path for newer runs.
-
-        Legacy note:
-          Older archives may not contain estimated_extrinsics.yaml.
-          In that case the visualizer falls back to the archived checkpoint +
-          single-frame inference path below.
         """
         cand = os.path.join(archive_dir, "estimated_extrinsics.yaml")
         if os.path.isfile(cand):
@@ -755,7 +730,7 @@ class ExtrinsicProjectionVisualizer(Node):
     def _draw_projection(self, image_bgr, points_lidar, intr, pose_cam_to_lidar, color_bgr):
         """
         Input pose convention is camera -> lidar, matching archive/reference
-        conventions in this project. Projection requires lidar -> camera, so we
+        conventions. Projection requires lidar -> camera, so we
         invert internally before calling project_lidar_to_image().
         """
         t_cam_lidar, q_cam_lidar = pose_cam_to_lidar
@@ -813,7 +788,7 @@ class ExtrinsicProjectionVisualizer(Node):
         Split metadata into at most two centered lines.
 
         Preference:
-          - break on separators already present in thesis metadata
+          - break on separators already present in metadata
           - keep the first line slightly shorter/equal when possible
           - if no good separator split exists, fall back to a word-based split
         """

@@ -5,14 +5,7 @@ Publishes a correct sensor_msgs/CameraInfo at a fixed rate, loaded from a YAML f
 (ROS camera_calibration format).
 
 Why:
-- Some camera drivers publish CameraInfo with zeros even if camera_info_url exists.
 - This node guarantees valid intrinsics for dataset extraction + reprojection evaluation.
-
-Usage example:
-  ros2 run <your_pkg> camera_info_republisher --ros-args \
-    -p camera_info_yaml:=/home/khan/calib/basler.yaml \
-    -p frame_id:=pylon_camera \
-    -p output_topic:=/basler/camera/camera_info
 """
 
 import os

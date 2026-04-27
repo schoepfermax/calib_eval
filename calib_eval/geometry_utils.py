@@ -43,7 +43,7 @@ def invert_extrinsics_cam_to_lidar_to_lidar_to_cam(t_cam_lidar, q_cam_lidar_xyzw
             header.frame_id = camera
             child_frame_id  = lidar
         i.e. the transform represents camera -> lidar.
-      - Projection utilities in this repo apply:
+      - Projection utilities apply:
             p_cam = R * p_lidar + t
         therefore they expect lidar -> camera.
 

@@ -123,7 +123,7 @@ def _extract_intrinsics_from_yaml_dict(d: Dict) -> Optional[Dict]:
                 "cy": float(cy),
             }
 
-    # 3a) CameraInfo-like with K (also support ROS-style lower-case k)
+    # 3a) CameraInfo-like with K
     K = d.get("K", d.get("k", None))  # support ROS-style lower-case k
     if isinstance(K, (list, tuple)) and len(K) == 9:
         w = d.get("width", d.get("image_width", None))
@@ -372,7 +372,7 @@ class UniversalCalibrationDataset:
         scan_yaml_path = os.path.join(run_dir, "scans", f"{sample_id}.yaml")
         odom_yaml_path = os.path.join(run_dir, "odom", f"{sample_id}.yaml")
 
-        # Backward-compatible legacy scan paths
+        # Legacy scan paths
         legacy_scan_npz_path = os.path.join(run_dir, "lidar", f"{sample_id}.npz")
         legacy_scan_yaml_path = os.path.join(run_dir, "lidar", f"{sample_id}.yaml")
 

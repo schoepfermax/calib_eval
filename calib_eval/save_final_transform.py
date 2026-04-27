@@ -1,7 +1,9 @@
 import os
+import math
 
 import rclpy
 from geometry_msgs.msg import TransformStamped
+from std_msgs.msg import Float32
 from rclpy.node import Node
 import yaml
 
@@ -11,24 +13,77 @@ class SaveTransform(Node):
     def __init__(self):
         super().__init__("save_transform")
 
+        # -----------------------------
+        # Parameters
+        # -----------------------------
         self.declare_parameter("output_path", "estimated_extrinsics.yaml")
         self.declare_parameter("extrinsics_topic", "/eval/estimated_extrinsics")
+
+        # Parameters for best selection
+        self.declare_parameter("metric_topic", "/eval/metrics/reprojection_pixel_error_px")
+        self.declare_parameter("metric_name", "reprojection_pixel_error_px")
 
         self.output_path = str(self.get_parameter("output_path").value)
         self.extrinsics_topic = str(self.get_parameter("extrinsics_topic").value)
 
+        self.metric_topic = str(self.get_parameter("metric_topic").value)
+        self.metric_name = str(self.get_parameter("metric_name").value)
+
+        # -----------------------------
+        # Internal state
+        # -----------------------------
         self.write_count = 0
         self.output_path_logged = False
 
-        self.sub = self.create_subscription(
+        self.latest_transform = None
+
+        self.best_transform = None
+        self.best_metric_value = float("inf")
+        self.best_metric_valid = False
+
+        # -----------------------------
+        # Subscriptions
+        # -----------------------------
+        self.sub_transform = self.create_subscription(
             TransformStamped,
             self.extrinsics_topic,
-            self.callback,
+            self.transform_callback,
             10
         )
 
-    def callback(self, msg):
-        data = {
+        self.sub_metric = self.create_subscription(
+            Float32,
+            self.metric_topic,
+            self.metric_callback,
+            10
+        )
+
+    # -----------------------------
+    # Callbacks
+    # -----------------------------
+    def transform_callback(self, msg):
+        self.latest_transform = msg
+        self.write_yaml()
+
+    def metric_callback(self, msg):
+        value = float(msg.data)
+
+        if not math.isfinite(value):
+            return
+
+        if self.latest_transform is None:
+            return
+
+        if value < self.best_metric_value:
+            self.best_metric_value = value
+            self.best_transform = self.latest_transform
+            self.best_metric_valid = True
+
+    # -----------------------------
+    # YAML writing
+    # -----------------------------
+    def transform_to_dict(self, msg):
+        return {
             "parent_frame": msg.header.frame_id,
             "child_frame": msg.child_frame_id,
             "translation": {
@@ -44,6 +99,28 @@ class SaveTransform(Node):
             },
         }
 
+    def write_yaml(self):
+        if self.latest_transform is None:
+            return
+
+        data = {
+            "convention": {
+                "description": "camera_to_lidar",
+                "note": "Transform expresses LiDAR pose in camera frame"
+            },
+            "selection_metric": {
+                "name": self.metric_name,
+                "best_value": float(self.best_metric_value) if self.best_metric_valid else None,
+                "best_value_valid": bool(self.best_metric_valid),
+            },
+            "last_transform": self.transform_to_dict(self.latest_transform),
+        }
+
+        if self.best_metric_valid and self.best_transform is not None:
+            data["best_transform"] = self.transform_to_dict(self.best_transform)
+        else:
+            data["best_transform"] = None
+
         output_dir = os.path.dirname(self.output_path)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
@@ -54,12 +131,12 @@ class SaveTransform(Node):
         self.write_count += 1
 
         if not self.output_path_logged:
-            self.get_logger().info(f"Saving latest estimated extrinsics to {self.output_path}")
+            self.get_logger().info(f"Saving transforms (last + best) to {self.output_path}")
             self.output_path_logged = True
 
         if self.write_count % 25 == 0:
             self.get_logger().info(
-                f"Updated estimated extrinsics YAML ({self.write_count} writes): {self.output_path}"
+                f"Updated transform YAML ({self.write_count} writes): {self.output_path}"
             )
 
 

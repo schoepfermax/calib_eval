@@ -21,7 +21,7 @@ Approximate physical measurements:
 
 # Initial Calibration Attempt
 
-Extrinsic calibration was first attempted using the **Abdul Haq calibration tool**, which estimates the transform using:
+Extrinsic calibration was first attempted using the **3D Calib tool**, which estimates the transform using:
 
 * ArUco marker detection in camera images
 * manually selected LiDAR points corresponding to marker corners
@@ -44,7 +44,7 @@ Likely causes:
 * sensitivity of PnP to noise
 * correspondence ordering ambiguity
 
-Because of this instability, the results from the Abdul Haq tool were deemed **unreliable for this rig configuration**.
+Because of this instability, the results from the tool were deemed **unreliable for this rig configuration**.
 
 ---
 
@@ -178,7 +178,7 @@ The final transformation is stored in:
 static_mount_h1_reference.yaml
 ```
 
-This file replaces the earlier calibration produced by the Abdul Haq tool.
+This file replaces the earlier calibration produced by the 3d Calib tool.
 
 Important:
 

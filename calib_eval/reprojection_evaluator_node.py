@@ -122,13 +122,12 @@ class ReprojectionEvaluatorNode(Node):
           - raw_scan      -> LaserScan
           - pseudo_points -> PointCloud2
 
-        To avoid requiring an immediate synchronized launch-file change, we also
+        We also
         infer from the resolved topic name when possible:
           - .../scan   -> LaserScan
           - .../points -> PointCloud2
 
-        If dynamic_representation is unset and the topic is ambiguous, we keep
-        the previous behavior for backward compatibility:
+        If dynamic_representation is unset and the topic is ambiguous:
           - dynamic rig defaults to LaserScan
           - static rig defaults to PointCloud2
         """
