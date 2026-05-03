@@ -203,6 +203,105 @@ source install/setup.bash
 
 ---
 
+## Dataset Extraction
+
+The pipeline expects datasets in a standardized **run-based structure**.  
+Two dataset extractors are provided to generate this structure directly from ROS topics.
+
+---
+
+### Overview
+
+The extractors:
+
+* Record synchronized sensor data  
+* Apply basic quality and synchronization checks  
+* Save data in a format directly compatible with the evaluation pipeline  
+* Automatically organize data into `run_XXX` folders  
+
+Each run is saved as:
+
+```
+run_XXX/
+  images/
+  lidar/        # point cloud OR pseudo-3D
+  scans/        # raw LaserScan (dynamic only)
+  odom/         # odometry (dynamic only)
+  intrinsics/
+  index/
+  meta/
+```
+
+---
+
+## Static Rig Extraction (3D)
+
+Used for:
+
+* camera + 3D LiDAR datasets  
+
+### Inputs
+
+* Image (`sensor_msgs/Image`)  
+* Point cloud (`sensor_msgs/PointCloud2`)  
+* Camera intrinsics (`CameraInfo`)  
+
+### Command
+
+```bash
+ros2 run calib_eval extract_static_rig_dataset --ros-args \
+  -p camera_topic:=/basler/camera/image_raw \
+  -p points_topic:=/ouster/points \
+  -p camera_info_topic:=/basler/camera/camera_info \
+  -p output_root:=/home/$USER/dataset_root/static_mount_h1
+```
+
+---
+
+## Dynamic Rig Extraction (2D)
+
+Used for:
+
+* camera + LaserScan datasets  
+
+### Inputs
+
+* Image (`sensor_msgs/Image`)  
+* LaserScan (`sensor_msgs/LaserScan`)  
+* Odometry (`nav_msgs/Odometry`)  
+* Camera intrinsics (`CameraInfo`)  
+
+### Command
+
+```bash
+ros2 run calib_eval extract_dynamic_rig_dataset --ros-args \
+  -p camera_topic:=/camera/image_raw \
+  -p scan_topic:=/lidar/scan \
+  -p camera_info_topic:=/camera/camera_info \
+  -p odom_topic:=/odom \
+  -p output_root:=/home/$USER/dataset_root/dynamic_rig
+```
+
+
+### Saved Outputs
+
+Primary (2D pipeline):
+
+* Raw LaserScan → `.npz` (in `scans/`)  
+
+Compatibility (3D pipeline):
+
+* Pseudo point cloud → `.pcd` (in `lidar/`)  
+
+Additional:
+
+* Images (`.png`)  
+* Odometry (`.yaml`)  
+* Per-sample metadata (`meta/`)  
+* Run summary (`run_summary.yaml`)  
+
+---
+
 ## Launch Usage
 
 The framework is controlled through ROS 2 launch parameters, enabling flexible configuration without modifying code.
